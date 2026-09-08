@@ -67,6 +67,7 @@ double minPathRange = 1.0;
 double pathRangeStep = 0.5;
 bool pathRangeBySpeed = true;
 bool pathCropByGoal = true;
+bool noPathReverse = true;
 bool autonomyMode = false;
 double autonomySpeed = 1.0;
 double joyToSpeedDelay = 2.0;
@@ -312,6 +313,11 @@ void checkObstacleHandler(const std_msgs::Bool::ConstPtr& checkObs)
   }
 }
 
+void twoWayDriveHandler(const std_msgs::Bool::ConstPtr& twoWayDr)
+{
+  twoWayDrive = twoWayDr->data;
+}
+
 int readPlyHeader(FILE *filePtr)
 {
   char str[50];
@@ -528,6 +534,7 @@ int main(int argc, char** argv)
   nhPrivate.getParam("pathRangeStep", pathRangeStep);
   nhPrivate.getParam("pathRangeBySpeed", pathRangeBySpeed);
   nhPrivate.getParam("pathCropByGoal", pathCropByGoal);
+  nhPrivate.getParam("noPathReverse", noPathReverse);
   nhPrivate.getParam("autonomyMode", autonomyMode);
   nhPrivate.getParam("autonomySpeed", autonomySpeed);
   nhPrivate.getParam("joyToSpeedDelay", joyToSpeedDelay);
@@ -556,6 +563,8 @@ int main(int argc, char** argv)
   ros::Subscriber subAddedObstacles = nh.subscribe<sensor_msgs::PointCloud2> ("/added_obstacles", 5, addedObstaclesHandler);
 
   ros::Subscriber subCheckObstacle = nh.subscribe<std_msgs::Bool> ("/check_obstacle", 5, checkObstacleHandler);
+
+  ros::Subscriber subTwoWayDrive = nh.subscribe<std_msgs::Bool> ("/two_way_drive", 5, twoWayDriveHandler);
 
   ros::Publisher pubPath = nh.advertise<nav_msgs::Path> ("/path", 5);
   nav_msgs::Path path;
@@ -687,6 +696,7 @@ int main(int argc, char** argv)
       float pathRange = adjacentRange;
       if (pathRangeBySpeed) pathRange = adjacentRange * joySpeed;
       if (pathRange < minPathRange) pathRange = minPathRange;
+      float pathRangeInit = pathRange;
       float relativeGoalDis = adjacentRange;
 
       if (autonomyMode) {
@@ -706,7 +716,9 @@ int main(int argc, char** argv)
       float defPathScale = pathScale;
       if (pathScaleBySpeed) pathScale = defPathScale * joySpeed;
       if (pathScale < minPathScale) pathScale = minPathScale;
-
+      float pathScaleInit = pathScale;
+      bool isReverse = false;
+      
       while (pathScale >= minPathScale && pathRange >= minPathRange) {
         for (int i = 0; i < 36 * pathNum; i++) {
           clearPathList[i] = 0;
@@ -714,6 +726,14 @@ int main(int argc, char** argv)
         }
         for (int i = 0; i < 36 * groupNum; i++) {
           clearPathPerGroupScore[i] = 0;
+        }
+
+        float relativeGoalDis2 = relativeGoalDis;
+        float joyDir2 = joyDir;
+        if (isReverse) {
+          relativeGoalDis2 = adjacentRange;
+          joyDir2 += 180.0;
+          if (joyDir2 > 180.0) joyDir2 -= 360.0;
         }
 
         float minObsAngCW = -180.0;
@@ -727,15 +747,15 @@ int main(int argc, char** argv)
           float h = plannerCloudCrop->points[i].intensity;
           float dis = sqrt(x * x + y * y);
 
-          if (dis < pathRange / pathScale && (dis <= (relativeGoalDis + goalClearRange) / pathScale || !pathCropByGoal) && checkObstacle) {
+          if (dis < pathRange / pathScale && (dis <= (relativeGoalDis2 + goalClearRange) / pathScale || !pathCropByGoal) && checkObstacle) {
             for (int rotDir = 0; rotDir < 36; rotDir++) {
               float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
-              float angDiff = fabs(joyDir - (10.0 * rotDir - 180.0));
+              float angDiff = fabs(joyDir2 - (10.0 * rotDir - 180.0));
               if (angDiff > 180.0) {
                 angDiff = 360.0 - angDiff;
               }
-              if ((angDiff > dirThre && !dirToVehicle) || (fabs(10.0 * rotDir - 180.0) > dirThre && fabs(joyDir) <= 90.0 && dirToVehicle) ||
-                  ((10.0 * rotDir > dirThre && 360.0 - 10.0 * rotDir > dirThre) && fabs(joyDir) > 90.0 && dirToVehicle)) {
+              if ((angDiff > dirThre && !dirToVehicle) || (fabs(10.0 * rotDir - 180.0) > dirThre && fabs(joyDir2) <= 90.0 && dirToVehicle) ||
+                  ((10.0 * rotDir > dirThre && 360.0 - 10.0 * rotDir > dirThre) && fabs(joyDir2) > 90.0 && dirToVehicle)) {
                 continue;
               }
 
@@ -781,12 +801,12 @@ int main(int argc, char** argv)
 
         for (int i = 0; i < 36 * pathNum; i++) {
           int rotDir = int(i / pathNum);
-          float angDiff = fabs(joyDir - (10.0 * rotDir - 180.0));
+          float angDiff = fabs(joyDir2 - (10.0 * rotDir - 180.0));
           if (angDiff > 180.0) {
             angDiff = 360.0 - angDiff;
           }
-          if ((angDiff > dirThre && !dirToVehicle) || (fabs(10.0 * rotDir - 180.0) > dirThre && fabs(joyDir) <= 90.0 && dirToVehicle) ||
-              ((10.0 * rotDir > dirThre && 360.0 - 10.0 * rotDir > dirThre) && fabs(joyDir) > 90.0 && dirToVehicle)) {
+          if ((angDiff > dirThre && !dirToVehicle) || (fabs(10.0 * rotDir - 180.0) > dirThre && fabs(joyDir2) <= 90.0 && dirToVehicle) ||
+              ((10.0 * rotDir > dirThre && 360.0 - 10.0 * rotDir > dirThre) && fabs(joyDir2) > 90.0 && dirToVehicle)) {
             continue;
           }
 
@@ -794,7 +814,7 @@ int main(int argc, char** argv)
             float penaltyScore = 1.0 - pathPenaltyList[i] / costHeightThre;
             if (penaltyScore < costScore) penaltyScore = costScore;
 
-            float dirDiff = fabs(joyDir - endDirPathList[i % pathNum] - (10.0 * rotDir - 180.0));
+            float dirDiff = fabs(joyDir2 - endDirPathList[i % pathNum] - (10.0 * rotDir - 180.0));
             if (dirDiff > 360.0) {
               dirDiff -= 360.0;
             }
@@ -839,10 +859,11 @@ int main(int argc, char** argv)
             float z = startPaths[selectedGroupID]->points[i].z;
             float dis = sqrt(x * x + y * y);
 
-            if (dis <= pathRange / pathScale && dis <= relativeGoalDis / pathScale) {
+            if (dis <= pathRange / pathScale && dis <= relativeGoalDis2 / pathScale) {
               path.poses[i].pose.position.x = pathScale * (cos(rotAng) * x - sin(rotAng) * y);
               path.poses[i].pose.position.y = pathScale * (sin(rotAng) * x + cos(rotAng) * y);
-              path.poses[i].pose.position.z = pathScale * z;
+              if (isReverse) path.poses[i].pose.position.z = -0.001;
+              else path.poses[i].pose.position.z = 0.001;
             } else {
               path.poses.resize(i);
               break;
@@ -860,12 +881,12 @@ int main(int argc, char** argv)
             float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
             float rotDeg = 10.0 * rotDir;
             if (rotDeg > 180.0) rotDeg -= 360.0;
-            float angDiff = fabs(joyDir - (10.0 * rotDir - 180.0));
+            float angDiff = fabs(joyDir2 - (10.0 * rotDir - 180.0));
             if (angDiff > 180.0) {
               angDiff = 360.0 - angDiff;
             }
-            if ((angDiff > dirThre && !dirToVehicle) || (fabs(10.0 * rotDir - 180.0) > dirThre && fabs(joyDir) <= 90.0 && dirToVehicle) ||
-                ((10.0 * rotDir > dirThre && 360.0 - 10.0 * rotDir > dirThre) && fabs(joyDir) > 90.0 && dirToVehicle) || 
+            if ((angDiff > dirThre && !dirToVehicle) || (fabs(10.0 * rotDir - 180.0) > dirThre && fabs(joyDir2) <= 90.0 && dirToVehicle) ||
+                ((10.0 * rotDir > dirThre && 360.0 - 10.0 * rotDir > dirThre) && fabs(joyDir2) > 90.0 && dirToVehicle) || 
                 !((rotAng * 180.0 / PI > minObsAngCW && rotAng * 180.0 / PI < minObsAngCCW) || 
                 (rotDeg > minObsAngCW && rotDeg < minObsAngCCW && twoWayDrive) || !checkRotObstacle)) {
               continue;
@@ -881,7 +902,7 @@ int main(int argc, char** argv)
                 float z = point.z;
 
                 float dis = sqrt(x * x + y * y);
-                if (dis <= pathRange / pathScale && (dis <= (relativeGoalDis + goalClearRange) / pathScale || !pathCropByGoal)) {
+                if (dis <= pathRange / pathScale && (dis <= (relativeGoalDis2 + goalClearRange) / pathScale || !pathCropByGoal)) {
                   point.x = pathScale * (cos(rotAng) * x - sin(rotAng) * y);
                   point.y = pathScale * (sin(rotAng) * x + cos(rotAng) * y);
                   point.z = pathScale * z;
@@ -905,8 +926,12 @@ int main(int argc, char** argv)
           if (pathScale >= minPathScale + pathScaleStep) {
             pathScale -= pathScaleStep;
             pathRange = adjacentRange * pathScale / defPathScale;
-          } else {
+          } else if (pathRange >= minPathRange + pathRangeStep || isReverse || !noPathReverse) {
             pathRange -= pathRangeStep;
+          } else if (!isReverse && noPathReverse) {
+            pathScale = pathScaleInit;
+            pathRange = pathRangeInit;
+            isReverse = true;
           }
         } else {
           pathFound = true;

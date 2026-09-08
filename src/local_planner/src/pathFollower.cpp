@@ -8,6 +8,7 @@
 #include <message_filters/synchronizer.h>
 #include <message_filters/sync_policies/approximate_time.h>
 
+#include <std_msgs/Bool.h>
 #include <std_msgs/Int8.h>
 #include <std_msgs/Float32.h>
 #include <nav_msgs/Path.h>
@@ -178,6 +179,11 @@ void stopHandler(const std_msgs::Int8::ConstPtr& stop)
   safetyStop = stop->data;
 }
 
+void twoWayDriveHandler(const std_msgs::Bool::ConstPtr& twoWayDr)
+{
+  twoWayDrive = twoWayDr->data;
+}
+
 int main(int argc, char** argv)
 {
   ros::init(argc, argv, "pathFollower");
@@ -222,6 +228,8 @@ int main(int argc, char** argv)
   ros::Subscriber subSpeed = nh.subscribe<std_msgs::Float32> ("/speed", 5, speedHandler);
 
   ros::Subscriber subStop = nh.subscribe<std_msgs::Int8> ("/stop", 5, stopHandler);
+
+  ros::Subscriber subTwoWayDrive = nh.subscribe<std_msgs::Bool> ("/two_way_drive", 5, twoWayDriveHandler);
 
   ros::Publisher pubSpeed = nh.advertise<geometry_msgs::TwistStamped> ("/cmd_vel", 5);
   geometry_msgs::TwistStamped cmd_vel;
@@ -273,6 +281,7 @@ int main(int argc, char** argv)
       if (dirDiff > PI) dirDiff -= 2 * PI;
       else if (dirDiff < -PI) dirDiff += 2 * PI;
 
+      float joySpeed2 = maxSpeed * joySpeed;
       if (twoWayDrive) {
         double time = ros::Time::now().toSec();
         if (fabs(dirDiff) > PI / 2 && navFwd && time - switchTime > switchTimeThre) {
@@ -282,9 +291,12 @@ int main(int argc, char** argv)
           navFwd = true;
           switchTime = time;
         }
+      } else if (path.poses[0].pose.position.z < 0) {
+        dirDiff += PI;
+        if (dirDiff > PI) dirDiff -= 2 * PI;
+        joySpeed2 *= -1;
       }
 
-      float joySpeed2 = maxSpeed * joySpeed;
       if (!navFwd) {
         dirDiff += PI;
         if (dirDiff > PI) dirDiff -= 2 * PI;

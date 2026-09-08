@@ -5,7 +5,7 @@ devel
 install
 
 .catkin_workspace
-
+.vscode
 *~
 
 .DS_Store
