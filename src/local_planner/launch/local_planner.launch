@@ -7,14 +7,24 @@
   <arg name="maxSpeed" default="0.2"/>
   <arg name="autonomyMode" default="true"/>
   <arg name="autonomySpeed" default="0.5"/>
+  <arg name="vehicleLength" default="0.85"/>
+  <arg name="vehicleWidth" default="0.6"/>
+  <arg name="searchRadius" default="0.55"/>
+  <arg name="gridVoxelSize" default="0.02"/>
+  <arg name="gridVoxelOffsetX" default="3.2"/>
+  <arg name="gridVoxelOffsetY" default="4.5"/>
   <arg name="joyToSpeedDelay" default="2.0"/>
   <arg name="goalX" default="0"/>
   <arg name="goalY" default="0"/>
 
   <node pkg="local_planner" type="localPlanner" name="localPlanner" output="screen" required="true">
     <param name="pathFolder" type="string" value="$(find local_planner)/paths" />
-    <param name="vehicleLength" type="double" value="0.6" />
-    <param name="vehicleWidth" type="double" value="0.6" />
+    <param name="vehicleLength" type="double" value="$(arg vehicleLength)" />
+    <param name="vehicleWidth" type="double" value="$(arg vehicleWidth)" />
+    <param name="searchRadius" type="double" value="$(arg searchRadius)" />
+    <param name="gridVoxelSize" type="double" value="$(arg gridVoxelSize)" />
+    <param name="gridVoxelOffsetX" type="double" value="$(arg gridVoxelOffsetX)" />
+    <param name="gridVoxelOffsetY" type="double" value="$(arg gridVoxelOffsetY)" />
     <param name="sensorOffsetX" value="$(arg sensorOffsetX)" />
     <param name="sensorOffsetY" value="$(arg sensorOffsetY)" />
     <param name="twoWayDrive" value="$(arg twoWayDrive)" />

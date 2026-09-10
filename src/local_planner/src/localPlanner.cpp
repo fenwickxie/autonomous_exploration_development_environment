@@ -34,7 +34,7 @@ const double PI = 3.1415926;
 #define PLOTPATHSET 1
 
 string pathFolder;
-double vehicleLength = 0.6;
+double vehicleLength = 0.85;
 double vehicleWidth = 0.6;
 double sensorOffsetX = 0;
 double sensorOffsetY = 0;
@@ -83,7 +83,7 @@ float joyDir = 0;
 const int pathNum = 343;
 const int groupNum = 7;
 float gridVoxelSize = 0.02;
-float searchRadius = 0.45;
+float searchRadius = 0.55;
 float gridVoxelOffsetX = 3.2;
 float gridVoxelOffsetY = 4.5;
 const int gridVoxelNumX = 161;
@@ -508,6 +508,10 @@ int main(int argc, char** argv)
   nhPrivate.getParam("sensorOffsetX", sensorOffsetX);
   nhPrivate.getParam("sensorOffsetY", sensorOffsetY);
   nhPrivate.getParam("twoWayDrive", twoWayDrive);
+  nhPrivate.getParam("gridVoxelSize", gridVoxelSize);
+  nhPrivate.getParam("searchRadius", searchRadius);
+  nhPrivate.getParam("gridVoxelOffsetX", gridVoxelOffsetX);
+  nhPrivate.getParam("gridVoxelOffsetY", gridVoxelOffsetY);
   nhPrivate.getParam("laserVoxelSize", laserVoxelSize);
   nhPrivate.getParam("terrainVoxelSize", terrainVoxelSize);
   nhPrivate.getParam("useTerrainAnalysis", useTerrainAnalysis);
