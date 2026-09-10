@@ -4,8 +4,11 @@
   <arg name="vehicleX" default="0"/>
   <arg name="vehicleY" default="0"/>
   <arg name="checkTerrainConn" default="false"/>
+  <arg name="use_joystick" default="false"/>
 
-  <include file="$(find ps3joy)/launch/ps3.launch" />
+  <group if="$(arg use_joystick)">
+    <include file="$(find ps3joy)/launch/ps3.launch" />
+  </group>
 
   <include file="$(find local_planner)/launch/local_planner.launch" >
     <arg name="cameraOffsetZ" value="$(arg cameraOffsetZ)"/>
@@ -19,7 +22,7 @@
     <arg name="checkTerrainConn" value="$(arg checkTerrainConn)"/>
   </include>
 
-  <include file="$(find sensor_scan_generation)/launch/sensor_scan_generation.launch" />
+  <!-- <include file="$(find sensor_scan_generation)/launch/sensor_scan_generation.launch" /> -->
 
   <include file="$(find loam_interface)/launch/loam_interface.launch" />
 

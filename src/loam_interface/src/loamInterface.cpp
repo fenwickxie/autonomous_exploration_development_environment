@@ -35,6 +35,7 @@ bool sendTF = true;
 bool reverseTF = false;
 
 pcl::PointCloud<pcl::PointXYZI>::Ptr laserCloud(new pcl::PointCloud<pcl::PointXYZI>());
+pcl::PointCloud<pcl::PointXYZ>::Ptr laserCloudXYZ(new pcl::PointCloud<pcl::PointXYZ>());
 
 nav_msgs::Odometry odomData;
 tf::StampedTransform odomTrans;
@@ -86,7 +87,29 @@ void odometryHandler(const nav_msgs::Odometry::ConstPtr& odom)
 void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudIn)
 {
   laserCloud->clear();
-  pcl::fromROSMsg(*laserCloudIn, *laserCloud);
+
+  // upstream cloud may not carry an intensity field (e.g. some real-lidar SLAM outputs)
+  bool hasIntensity = false;
+  for (int i = 0; i < laserCloudIn->fields.size(); i++) {
+    if (laserCloudIn->fields[i].name == "intensity") {
+      hasIntensity = true;
+      break;
+    }
+  }
+
+  if (hasIntensity) {
+    pcl::fromROSMsg(*laserCloudIn, *laserCloud);
+  } else {
+    laserCloudXYZ->clear();
+    pcl::fromROSMsg(*laserCloudIn, *laserCloudXYZ);
+    laserCloud->resize(laserCloudXYZ->size());
+    for (int i = 0; i < laserCloudXYZ->size(); i++) {
+      laserCloud->points[i].x = laserCloudXYZ->points[i].x;
+      laserCloud->points[i].y = laserCloudXYZ->points[i].y;
+      laserCloud->points[i].z = laserCloudXYZ->points[i].z;
+      laserCloud->points[i].intensity = 0;
+    }
+  }
 
   if (flipRegisteredScan) {
     int laserCloudSize = laserCloud->points.size();

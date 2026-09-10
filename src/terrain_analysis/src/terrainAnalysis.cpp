@@ -252,6 +252,13 @@ int main(int argc, char **argv) {
     if (newlaserCloud) {
       newlaserCloud = false;
 
+
+///////
+  for (int i = 0; i < terrainVoxelNum; i++) {
+    terrainVoxelCloud[i].reset(new pcl::PointCloud<pcl::PointXYZI>());
+  }
+  ///////
+
       // terrain voxel roll over
       float terrainVoxelCenX = terrainVoxelSize * terrainVoxelShiftX;
       float terrainVoxelCenY = terrainVoxelSize * terrainVoxelShiftY;
