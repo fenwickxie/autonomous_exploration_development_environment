@@ -31,6 +31,7 @@ using namespace std;
 
 const double PI = 3.1415926;
 
+// 跟踪、运动限制和自主参数由 launch 提供。控制器假设 /path 位于 localPlanner 输出时的车体系。
 double sensorOffsetX = 0;
 double sensorOffsetY = 0;
 int pubSkipNum = 1;
@@ -96,6 +97,7 @@ nav_msgs::Path path;
 
 void odomHandler(const nav_msgs::Odometry::ConstPtr& odomIn)
 {
+  // 将传感器位姿换算为车辆中心位姿，并检查坡度/角速度安全条件；时间戳驱动定时减速和停车。
   odomTime = odomIn->header.stamp.toSec();
 
   double roll, pitch, yaw;
@@ -120,6 +122,7 @@ void odomHandler(const nav_msgs::Odometry::ConstPtr& odomIn)
 
 void pathHandler(const nav_msgs::Path::ConstPtr& pathIn)
 {
+  // 只复制路径位置，并冻结接收时车辆位姿；控制循环会将后续里程计换算回该参考系。
   int pathSize = pathIn->poses.size();
   path.poses.resize(pathSize);
   for (int i = 0; i < pathSize; i++) {
@@ -141,6 +144,7 @@ void pathHandler(const nav_msgs::Path::ConstPtr& pathIn)
 
 void joystickHandler(const sensor_msgs::Joy::ConstPtr& joy)
 {
+  // 手动手柄输入暂时覆盖自主速度请求。
   joyTime = ros::Time::now().toSec();
 
   joySpeedRaw = sqrt(joy->axes[3] * joy->axes[3] + joy->axes[4] * joy->axes[4]);
@@ -164,6 +168,7 @@ void joystickHandler(const sensor_msgs::Joy::ConstPtr& joy)
 
 void speedHandler(const std_msgs::Float32::ConstPtr& speed)
 {
+  // 仅在手柄一段时间未操作后，自主任务源才能设置速度。
   double speedTime = ros::Time::now().toSec();
 
   if (autonomyMode && speedTime - joyTime > joyToSpeedDelay && joySpeedRaw == 0) {
@@ -176,6 +181,7 @@ void speedHandler(const std_msgs::Float32::ConstPtr& speed)
 
 void stopHandler(const std_msgs::Int8::ConstPtr& stop)
 {
+  // 安全命令优先级：值大于等于 1 禁止平移，大于等于 2 同时禁止偏航。
   safetyStop = stop->data;
 }
 
@@ -247,6 +253,7 @@ int main(int argc, char** argv)
     ros::spinOnce();
 
     if (pathInit) {
+      // 将当前车辆位置变换到接收路径时的参考系，无需要求路径采用全局表示。
       float vehicleXRel = cos(vehicleYawRec) * (vehicleX - vehicleXRec) 
                         + sin(vehicleYawRec) * (vehicleY - vehicleYRec);
       float vehicleYRel = -sin(vehicleYawRec) * (vehicleX - vehicleXRec) 
@@ -259,6 +266,7 @@ int main(int argc, char** argv)
 
       float disX, disY, dis;
       while (pathPointID < pathSize - 1) {
+        // 车辆进入当前前视点范围后，推进到下一目标点。
         disX = path.poses[pathPointID].pose.position.x - vehicleXRel;
         disY = path.poses[pathPointID].pose.position.y - vehicleYRel;
         dis = sqrt(disX * disX + disY * disY);
@@ -282,6 +290,7 @@ int main(int argc, char** argv)
 
       float joySpeed2 = maxSpeed * joySpeed;
       if (twoWayDrive) {
+        // 仅在保持一段时间后切换行驶方向，避免在 90 度航向误差附近快速振荡。
         double time = ros::Time::now().toSec();
         if (fabs(dirDiff) > PI / 2 && navFwd && time - switchTime > switchTimeThre) {
           navFwd = false;
@@ -321,10 +330,12 @@ int main(int argc, char** argv)
       }
 
       float joySpeed3 = joySpeed2;
+      // 倾角变化率事件会在配置的恢复时间窗内降低速度。
       if (odomTime < slowInitTime + slowTime1 && slowInitTime > 0) joySpeed3 *= slowRate1;
       else if (odomTime < slowInitTime + slowTime1 + slowTime2 && slowInitTime > 0) joySpeed3 *= slowRate2;
 
       if (fabs(dirDiff) < dirDiffThre && dis > stopDisThre) {
+        // 仅航向对齐时加速，否则转弯时减速。100 Hz 循环使 maxAccel/100 成为每周期增量。
         if (vehicleSpeed < joySpeed3) vehicleSpeed += maxAccel / 100.0;
         else if (vehicleSpeed > joySpeed3) vehicleSpeed -= maxAccel / 100.0;
       } else {
@@ -342,6 +353,7 @@ int main(int argc, char** argv)
 
       pubSkipCount--;
       if (pubSkipCount < 0) {
+        // 接近静止时发布零线速度，抑制数值漂移。
         if (fabs(vehicleSpeed) <= maxAccel / 100.0) cmd_vel.linear.x = 0;
         else cmd_vel.linear.x = vehicleSpeed;
         cmd_vel.angular.z = vehicleYawRate;

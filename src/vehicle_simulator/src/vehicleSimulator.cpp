@@ -34,6 +34,7 @@ using namespace std;
 
 const double PI = 3.1415926;
 
+// 参数定义运动学车辆和地形跟随近似；Gazebo 负责传感器渲染，本节点维护导航状态。
 bool use_gazebo_time = false;
 double cameraOffsetZ = 0;
 double sensorOffsetX = 0;
@@ -80,6 +81,7 @@ float terrainRoll = 0;
 float terrainPitch = 0;
 
 const int stackNum = 400;
+// 历史状态将延迟的 Gazebo 传感器扫描与最近的仿真位姿对齐。
 float vehicleXStack[stackNum];
 float vehicleYStack[stackNum];
 float vehicleZStack[stackNum];
@@ -130,6 +132,7 @@ void scanHandler(const sensor_msgs::PointCloud2::ConstPtr& scanIn)
 
   if (use_gazebo_time)
   {
+    // 用扫描时间戳匹配记录的车辆/地形状态，而非最新位姿，避免已配准点云发生空间拖影。
     odomRecTime = odomTimeStack[odomRecIDPointer];
     vehicleRecX = vehicleXStack[odomRecIDPointer];
     vehicleRecY = vehicleYStack[odomRecIDPointer];
@@ -153,6 +156,7 @@ void scanHandler(const sensor_msgs::PointCloud2::ConstPtr& scanIn)
   int scanDataSize = scanData->points.size();
   for (int i = 0; i < scanDataSize; i++)
   {
+    // 撤销地形对齐旋转，再将每个传感器系射线终点平移到 map，形成已配准扫描。
     float pointX1 = scanData->points[i].x;
     float pointY1 = scanData->points[i].y * cosTerrainRecRoll - scanData->points[i].z * sinTerrainRecRoll;
     float pointZ1 = scanData->points[i].y * sinTerrainRecRoll + scanData->points[i].z * cosTerrainRecRoll;
@@ -170,7 +174,7 @@ void scanHandler(const sensor_msgs::PointCloud2::ConstPtr& scanIn)
     scanData->points[i].z = pointZ3;
   }
 
-  // publish 5Hz registered scan messages
+  // 发布 5 Hz 已配准扫描消息
   sensor_msgs::PointCloud2 scanData2;
   pcl::toROSMsg(*scanData, scanData2);
   scanData2.header.stamp = ros::Time().fromSec(odomRecTime);
@@ -188,6 +192,7 @@ void terrainCloudHandler(const sensor_msgs::PointCloud2ConstPtr& terrainCloud2)
   terrainCloud->clear();
   pcl::fromROSMsg(*terrainCloud2, *terrainCloud);
 
+  // 选择车辆附近低代价地形，用于高度和斜率拟合。
   pcl::PointXYZI point;
   terrainCloudIncl->clear();
   int terrainCloudSize = terrainCloud->points.size();
@@ -251,6 +256,7 @@ void terrainCloudHandler(const sensor_msgs::PointCloud2ConstPtr& terrainCloud2)
   matX.at<float>(1, 0) = terrainRoll;
   for (int iterCount = 0; iterCount < 5; iterCount++)
   {
+    // 围绕局部平均高程迭代拟合 z = a*x + b*y；首次求解后移除残差离群点以排除障碍物。
     int outlierCount = 0;
     for (int i = 0; i < terrainCloudDwzSize; i++)
     {
@@ -296,6 +302,7 @@ void terrainCloudHandler(const sensor_msgs::PointCloud2ConstPtr& terrainCloud2)
 
 void speedHandler(const geometry_msgs::Twist::ConstPtr& speedIn)
 {
+  // 将 /cmd_vel 解释为期望车体前向速度和偏航角速度。
   vehicleSpeed = speedIn->linear.x;
   vehicleYawRate = speedIn->angular.z;
 }
@@ -369,6 +376,7 @@ int main(int argc, char** argv)
     float vehicleRecPitch = vehiclePitch;
     float vehicleRecZ = vehicleZ;
 
+    // 将地形系斜率转为车体系 roll/pitch，再以固定 0.005 s（200 Hz）步长积分平面运动学模型。
     vehicleRoll = terrainRoll * cos(vehicleYaw) + terrainPitch * sin(vehicleYaw);
     vehiclePitch = -terrainRoll * sin(vehicleYaw) + terrainPitch * cos(vehicleYaw);
     vehicleYaw += 0.005 * vehicleYawRate;
@@ -398,7 +406,7 @@ int main(int argc, char** argv)
     terrainRollStack[odomSendIDPointer] = terrainRoll;
     terrainPitchStack[odomSendIDPointer] = terrainPitch;
 
-    // publish 200Hz odometry messages
+    // /state_estimation 是导航栈的统一位姿接口；角速度 x/y 编码模拟 roll/pitch 变化率供安全逻辑使用。
     geometry_msgs::Quaternion geoQuat = tf::createQuaternionMsgFromRollPitchYaw(vehicleRoll, vehiclePitch, vehicleYaw);
 
     odomData.header.stamp = odomTime;
@@ -413,13 +421,13 @@ int main(int argc, char** argv)
     odomData.twist.twist.linear.z = 200.0 * (vehicleZ - vehicleRecZ);
     pubVehicleOdom.publish(odomData);
 
-    // publish 200Hz tf messages
+    // 保持 TF 与 Odometry 消息一致，供 RViz 和坐标变换使用。
     odomTrans.stamp_ = odomTime;
     odomTrans.setRotation(tf::Quaternion(geoQuat.x, geoQuat.y, geoQuat.z, geoQuat.w));
     odomTrans.setOrigin(tf::Vector3(vehicleX, vehicleY, vehicleZ));
     tfBroadcaster.sendTransform(odomTrans);
 
-    // publish 200Hz Gazebo model state messages (this is for Gazebo simulation)
+    // 将 Gazebo 中的可视化/传感器模型移动到刚积分得到的运动学状态。
     cameraState.pose.orientation = geoQuat;
     cameraState.pose.position.x = vehicleX;
     cameraState.pose.position.y = vehicleY;

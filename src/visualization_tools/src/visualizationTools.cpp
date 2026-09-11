@@ -28,6 +28,7 @@ using namespace std;
 
 const double PI = 3.1415926;
 
+// 用于评估而非导航的地图/日志位置和采样阈值。
 string metricFile;
 string trajFile;
 string mapFile;
@@ -51,6 +52,7 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr exploredVolumeCloud2(new pcl::PointCloud<pc
 pcl::PointCloud<pcl::PointXYZI>::Ptr trajectory(new pcl::PointCloud<pcl::PointXYZI>());
 
 const int systemDelay = 5;
+// 延迟到收到若干扫描后再初始化指标，避免不完整传感器状态导致启动轨迹和体积统计失真。
 int systemDelayCount = 0;
 bool systemDelayInited = false;
 double systemTime = 0;
@@ -78,6 +80,7 @@ FILE *trajFilePtr = NULL;
 
 void odometryHandler(const nav_msgs::Odometry::ConstPtr& odom)
 {
+  // 仅在平移或转动显著后加入轨迹采样，减少磁盘写入和 RViz 流量，同时保留路径长度。
   systemTime = odom->header.stamp.toSec();
 
   double roll, pitch, yaw;
@@ -118,6 +121,7 @@ void odometryHandler(const nav_msgs::Odometry::ConstPtr& odom)
     systemInited = true;
   }
 
+  // 使用采样后的三维位移而非轮式里程计累积距离。
   travelingDis += dis;
 
   vehicleYaw = yaw;
@@ -157,6 +161,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudIn)
   laserCloud->clear();
   pcl::fromROSMsg(*laserCloudIn, *laserCloud);
 
+  // 被任一已配准扫描点占据的体素计入探索体积；再次下采样使重复观测仅贡献一次。
   *exploredVolumeCloud += *laserCloud;
 
   exploredVolumeCloud2->clear();
@@ -170,6 +175,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudIn)
   exploredVolume = exploredVolumeVoxelSize * exploredVolumeVoxelSize * 
                    exploredVolumeVoxelSize * exploredVolumeCloud->points.size();
 
+  // 另一份更细的点云用于探索区域可视化输出。
   *exploredAreaCloud += *laserCloud;
 
   exploredAreaDisplayCount++;
@@ -191,6 +197,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudIn)
     exploredAreaDisplayCount = 0;
   }
 
+  // 持久化四列：探索体积、行驶距离、外部提供的运行时间、累计时长；读取日志时应保持该顺序。
   fprintf(metricFilePtr, "%f %f %f %f\n", exploredVolume, travelingDis, runtime, timeDuration);
 
   std_msgs::Float32 exploredVolumeMsg;
@@ -247,7 +254,7 @@ int main(int argc, char** argv)
   ros::Publisher pubTimeDuration = nh.advertise<std_msgs::Float32> ("/time_duration", 5);
   pubTimeDurationPtr = &pubTimeDuration;
 
-  //ros::Publisher pubRuntime = nh.advertise<std_msgs::Float32> ("/runtime", 5);
+  // 如需由此节点发布运行时间，可恢复该发布者。
 
   overallMapDwzFilter.setLeafSize(overallMapVoxelSize, overallMapVoxelSize, overallMapVoxelSize);
   exploredAreaDwzFilter.setLeafSize(exploredAreaVoxelSize, exploredAreaVoxelSize, exploredAreaVoxelSize);
@@ -258,6 +265,7 @@ int main(int argc, char** argv)
     printf("\nCouldn't read pointcloud.ply file.\n\n");
   }
 
+  // 静态环境预览图仅加载一次，与探索无关；周期重发使任意时刻启动的 RViz 都能订阅。
   overallMapCloudDwz->clear();
   overallMapDwzFilter.setInputCloud(overallMapCloud);
   overallMapDwzFilter.filter(*overallMapCloudDwz);

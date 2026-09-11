@@ -26,6 +26,7 @@ using namespace std;
 
 const double PI = 3.1415926;
 
+// 从 terrain_analysis.launch 读取的配置，定义时序地图窗口、点高度范围和障碍解释方式。
 double scanVoxelSize = 0.05;
 double decayTime = 2.0;
 double noDecayDis = 4.0;
@@ -54,7 +55,7 @@ double minRelZ = -1.5;
 double maxRelZ = 0.2;
 double disRatioZ = 0.2;
 
-// terrain voxel parameters
+// 以车辆为中心的 21 x 21 滚动三维点云格；车辆跨越格边界时复用对应单元。
 float terrainVoxelSize = 1.0;
 int terrainVoxelShiftX = 0;
 int terrainVoxelShiftY = 0;
@@ -62,7 +63,7 @@ const int terrainVoxelWidth = 21;
 int terrainVoxelHalfWidth = (terrainVoxelWidth - 1) / 2;
 const int terrainVoxelNum = terrainVoxelWidth * terrainVoxelWidth;
 
-// planar voxel parameters
+// 更稠密的二维高程网格，仅用于估计局部地面高度。
 float planarVoxelSize = 0.2;
 const int planarVoxelWidth = 51;
 int planarVoxelHalfWidth = (planarVoxelWidth - 1) / 2;
@@ -104,8 +105,9 @@ float sinVehicleYaw = 0, cosVehicleYaw = 0;
 
 pcl::VoxelGrid<pcl::PointXYZI> downSizeFilter;
 
-// state estimation callback function
+// 状态估计回调函数
 void odometryHandler(const nav_msgs::Odometry::ConstPtr &odom) {
+  // 缓存位姿和三角函数值，因为主循环内每个点变换都使用最新车辆位姿。
   double roll, pitch, yaw;
   geometry_msgs::Quaternion geoQuat = odom->pose.pose.orientation;
   tf::Matrix3x3(tf::Quaternion(geoQuat.x, geoQuat.y, geoQuat.z, geoQuat.w))
@@ -131,6 +133,7 @@ void odometryHandler(const nav_msgs::Odometry::ConstPtr &odom) {
     noDataInited = 1;
   }
   if (noDataInited == 1) {
+    // 车辆移动足够距离后才启用未知区域处理，避免将启动瞬态误判为未观测区域。
     float dis = sqrt((vehicleX - vehicleXRec) * (vehicleX - vehicleXRec) +
                      (vehicleY - vehicleYRec) * (vehicleY - vehicleYRec));
     if (dis >= noDecayDis)
@@ -138,8 +141,9 @@ void odometryHandler(const nav_msgs::Odometry::ConstPtr &odom) {
   }
 }
 
-// registered laser scan callback function
+// 已配准激光扫描回调函数
 void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloud2) {
+  // 保留车辆附近 map 坐标系中的点。intensity 暂存观测年龄，发布前会重写为高程。
   laserCloudTime = laserCloud2->header.stamp.toSec();
 
   if (!systemInited) {
@@ -176,15 +180,16 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloud2) {
   newlaserCloud = true;
 }
 
-// joystick callback function
+// 手柄回调函数
 void joystickHandler(const sensor_msgs::Joy::ConstPtr &joy) {
+  // 5 号按键清理局部地图状态，并重新开始未知区域初始化。
   if (joy->buttons[5] > 0.5) {
     noDataInited = 0;
     clearingCloud = true;
   }
 }
 
-// cloud clearing callback function
+// 点云清理回调函数
 void clearingHandler(const std_msgs::Float32::ConstPtr &dis) {
   noDataInited = 0;
   clearingDis = dis->data;
@@ -252,14 +257,13 @@ int main(int argc, char **argv) {
     if (newlaserCloud) {
       newlaserCloud = false;
 
-
-///////
+      // 当前实现注意：每帧都会重新初始化所有滚动单元，因此跨帧累积观测会在滚动前丢弃。
+      // 这里保持该行为不变，因为修改它会改变地图算法行为。
   for (int i = 0; i < terrainVoxelNum; i++) {
     terrainVoxelCloud[i].reset(new pcl::PointCloud<pcl::PointXYZI>());
   }
-  ///////
 
-      // terrain voxel roll over
+      // 车辆离开中心格时移动指针所有权而不复制点云；新暴露的外侧行/列会被清空。
       float terrainVoxelCenX = terrainVoxelSize * terrainVoxelShiftX;
       float terrainVoxelCenY = terrainVoxelSize * terrainVoxelShiftY;
 
@@ -329,7 +333,7 @@ int main(int argc, char **argv) {
         terrainVoxelCenY = terrainVoxelSize * terrainVoxelShiftY;
       }
 
-      // stack registered laser scans
+      // 将当前点插入以车辆为中心的 1 m 单元做时序过滤；此时点 intensity 仍保存初始化后的秒数。
       pcl::PointXYZI point;
       int laserCloudCropSize = laserCloudCrop->points.size();
       for (int i = 0; i < laserCloudCropSize; i++) {
@@ -366,6 +370,7 @@ int main(int argc, char **argv) {
           downSizeFilter.setInputCloud(terrainVoxelCloudPtr);
           downSizeFilter.filter(*laserCloudDwz);
 
+          // 下采样后仅保留最近点，邻近 no-decay 半径内除外；请求清理时也会删除近处点。
           terrainVoxelCloudPtr->clear();
           int laserCloudDwzSize = laserCloudDwz->points.size();
           for (int i = 0; i < laserCloudDwzSize; i++) {
@@ -396,7 +401,7 @@ int main(int argc, char **argv) {
         }
       }
 
-      // estimate ground and compute elevation for each point
+      // 每个源点为相邻 3 x 3 平面格投票，在提取障碍前平滑格边界的地面估计。
       for (int i = 0; i < planarVoxelNum; i++) {
         planarVoxelElev[i] = 0;
         planarVoxelEdge[i] = 0;
@@ -476,6 +481,7 @@ int main(int argc, char **argv) {
       }
 
       if (clearDyObs) {
+        // 统计符合传感器垂直视场的点，后续用于排除归因于动态遮挡物的单元。
         for (int i = 0; i < laserCloudCropSize; i++) {
           point = laserCloudCrop->points[i];
 
@@ -507,6 +513,7 @@ int main(int argc, char **argv) {
       }
 
       if (useSorting) {
+        // 使用低分位数而非均值估计地面，避免地面上方物体将均值抬高。
         for (int i = 0; i < planarVoxelNum; i++) {
           int planarPointElevSize = planarPointElev[i].size();
           if (planarPointElevSize > 0) {
@@ -571,6 +578,7 @@ int main(int argc, char **argv) {
                 !clearDyObs) {
               float disZ =
                   point.z - planarVoxelElev[planarVoxelWidth * indX + indY];
+                // 地形图 intensity 是导航代价：高于地面的高度；考虑坑洼时为绝对高差。
               if (considerDrop)
                 disZ = fabs(disZ);
               int planarPointElevSize =
@@ -588,6 +596,7 @@ int main(int argc, char **argv) {
       }
 
       if (noDataObstacle && noDataInited == 2) {
+        // 将未观测平面区域标为障碍格，再按配置网格步数扩张边界形成安全余量。
         for (int i = 0; i < planarVoxelNum; i++) {
           int planarPointElevSize = planarPointElev[i].size();
           if (planarPointElevSize < minBlockPointNum) {
@@ -651,7 +660,7 @@ int main(int argc, char **argv) {
 
       clearingCloud = false;
 
-      // publish points with elevation
+      // 在 map 坐标系发布紧凑的可通行性表示。
       sensor_msgs::PointCloud2 terrainCloud2;
       pcl::toROSMsg(*terrainCloudElev, terrainCloud2);
       terrainCloud2.header.stamp = ros::Time().fromSec(laserCloudTime);

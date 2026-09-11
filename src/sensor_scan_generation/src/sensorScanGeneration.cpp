@@ -20,6 +20,7 @@
 
 using namespace std;
 
+// 此节点为需要传感器坐标系扫描及精确采集时刻位姿的算法适配 map 坐标系已配准扫描。
 pcl::PointCloud<pcl::PointXYZ>::Ptr laserCloudIn(new pcl::PointCloud<pcl::PointXYZ>());
 pcl::PointCloud<pcl::PointXYZ>::Ptr laserCLoudInSensorFrame(new pcl::PointCloud<pcl::PointXYZ>());
 
@@ -42,6 +43,7 @@ ros::Publisher pubLaserCloud;
 void laserCloudAndOdometryHandler(const nav_msgs::Odometry::ConstPtr& odometry,
                                   const sensor_msgs::PointCloud2ConstPtr& laserCloud2)
 {
+  // ApproximateTime 已配对这两条消息。输出时间戳始终采用扫描时间，代表物理采集时刻。
   laserCloudIn->clear();
   laserCLoudInSensorFrame->clear();
 
@@ -66,6 +68,7 @@ void laserCloudAndOdometryHandler(const nav_msgs::Odometry::ConstPtr& odometry,
     vec.setY(p1.y);
     vec.setZ(p1.z);
 
+    // registered_scan 位于 map 中。应用 inverse(map -> sensor) 恢复 sensor_at_scan 测得的点坐标。
     vec = transformToMap.inverse() * vec;
 
     p1.x = vec.x();
@@ -98,7 +101,7 @@ int main(int argc, char** argv)
   ros::NodeHandle nh;
   ros::NodeHandle nhPrivate = ros::NodeHandle("~");
 
-  // ROS message filters
+  // 通常无法精确同步；从长度为 100 的队列中接受时间接近的位姿/扫描对，而非任意配对最新消息。
   message_filters::Subscriber<nav_msgs::Odometry> subOdometry;
   message_filters::Subscriber<sensor_msgs::PointCloud2> subLaserCloud;
   typedef message_filters::sync_policies::ApproximateTime<nav_msgs::Odometry, sensor_msgs::PointCloud2> syncPolicy;

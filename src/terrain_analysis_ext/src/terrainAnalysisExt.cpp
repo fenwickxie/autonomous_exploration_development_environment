@@ -28,6 +28,7 @@ using namespace std;
 
 const double PI = 3.1415926;
 
+// 此节点以分辨率换取更大的地图范围，并可移除与车辆地面不连通的表面。
 double scanVoxelSize = 0.1;
 double decayTime = 10.0;
 double noDecayDis = 0;
@@ -47,7 +48,7 @@ double terrainConnThre = 0.5;
 double ceilingFilteringThre = 2.0;
 double localTerrainMapRadius = 4.0;
 
-// terrain voxel parameters
+// 41 x 41 个边长 2 m 的单元组成 82 m 的滚动观测窗口。
 float terrainVoxelSize = 2.0;
 int terrainVoxelShiftX = 0;
 int terrainVoxelShiftY = 0;
@@ -55,7 +56,7 @@ const int terrainVoxelWidth = 41;
 int terrainVoxelHalfWidth = (terrainVoxelWidth - 1) / 2;
 const int terrainVoxelNum = terrainVoxelWidth * terrainVoxelWidth;
 
-// planar voxel parameters
+// 0.4 m 平面网格存储局部地面估计和连通状态：0 未见、1 待处理、2 连通、-1 疑似顶棚。
 float planarVoxelSize = 0.4;
 const int planarVoxelWidth = 101;
 int planarVoxelHalfWidth = (planarVoxelWidth - 1) / 2;
@@ -88,7 +89,7 @@ float vehicleX = 0, vehicleY = 0, vehicleZ = 0;
 pcl::VoxelGrid<pcl::PointXYZI> downSizeFilter;
 pcl::KdTreeFLANN<pcl::PointXYZI> kdtree;
 
-// state estimation callback function
+// 状态估计回调函数
 void odometryHandler(const nav_msgs::Odometry::ConstPtr& odom)
 {
   double roll, pitch, yaw;
@@ -103,9 +104,10 @@ void odometryHandler(const nav_msgs::Odometry::ConstPtr& odom)
   vehicleZ = odom->pose.pose.position.z;
 }
 
-// registered laser scan callback function
+// 已配准激光扫描回调函数
 void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloud2)
 {
+  // 在构建最终高程图前，将观测年龄暂存在 intensity 中。
   laserCloudTime = laserCloud2->header.stamp.toSec();
 
   if (!systemInited)
@@ -143,14 +145,15 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloud2)
   newlaserCloud = true;
 }
 
-// local terrain cloud callback function
+// 局部地形点云回调函数
 void terrainCloudLocalHandler(const sensor_msgs::PointCloud2ConstPtr& terrainCloudLocal2)
 {
+  // 稍后合并高精度近场地形图，避免车辆周围出现两套不一致的地形估计。
   terrainCloudLocal->clear();
   pcl::fromROSMsg(*terrainCloudLocal2, *terrainCloudLocal);
 }
 
-// joystick callback function
+// 手柄回调函数
 void joystickHandler(const sensor_msgs::Joy::ConstPtr& joy)
 {
   if (joy->buttons[5] > 0.5)
@@ -159,7 +162,7 @@ void joystickHandler(const sensor_msgs::Joy::ConstPtr& joy)
   }
 }
 
-// cloud clearing callback function
+// 点云清理回调函数
 void clearingHandler(const std_msgs::Float32::ConstPtr& dis)
 {
   clearingDis = dis->data;
@@ -222,7 +225,7 @@ int main(int argc, char** argv)
     {
       newlaserCloud = false;
 
-      // terrain voxel roll over
+      // 大范围地图随车辆移动时复用单元指针。
       float terrainVoxelCenX = terrainVoxelSize * terrainVoxelShiftX;
       float terrainVoxelCenY = terrainVoxelSize * terrainVoxelShiftY;
 
@@ -296,7 +299,7 @@ int main(int argc, char** argv)
         terrainVoxelCenY = terrainVoxelSize * terrainVoxelShiftY;
       }
 
-      // stack registered laser scans
+      // 将过滤后的全局扫描加入对应的滚动地图单元。
       pcl::PointXYZI point;
       int laserCloudCropSize = laserCloudCrop->points.size();
       for (int i = 0; i < laserCloudCropSize; i++)
@@ -358,7 +361,7 @@ int main(int argc, char** argv)
         }
       }
 
-      // estimate ground and compute elevation for each point
+      // 从附近三维点的最小值/分位数 Z 构建二维地面估计。
       for (int i = 0; i < planarVoxelNum; i++)
       {
         planarVoxelElev[i] = 0;
@@ -439,7 +442,7 @@ int main(int argc, char** argv)
         }
       }
   
-      // check terrain connectivity to remove ceiling
+      // 从车辆下方单元开始洪泛；仅通过小高度变化到达的单元才与地面连通并允许发布。
       if (checkTerrainConn)
       {
         int ind = planarVoxelWidth * planarVoxelHalfWidth + planarVoxelHalfWidth;
@@ -480,7 +483,7 @@ int main(int argc, char** argv)
         } 
       }
 
-      // compute terrain map beyond localTerrainMapRadius
+      // 仅在可信局部地图半径之外使用该较粗的估计器。
       terrainCloudElev->clear();
       int terrainCloudElevSize = 0;
       for (int i = 0; i < terrainCloudSize; i++)
@@ -515,7 +518,7 @@ int main(int argc, char** argv)
         }
       }
 
-      // merge in local terrain map within localTerrainMapRadius
+      // 保留车辆附近分辨率更高的基础地形表示。
       int terrainCloudLocalSize = terrainCloudLocal->points.size();
       for (int i = 0; i < terrainCloudLocalSize; i++) {
         point = terrainCloudLocal->points[i];
@@ -528,7 +531,7 @@ int main(int argc, char** argv)
 
       clearingCloud = false;
 
-      // publish points with elevation
+      // 与 /terrain_map 相同，intensity 表示点到局部地面的高度差。
       sensor_msgs::PointCloud2 terrainCloud2;
       pcl::toROSMsg(*terrainCloudElev, terrainCloud2);
       terrainCloud2.header.stamp = ros::Time().fromSec(laserCloudTime);

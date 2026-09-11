@@ -33,6 +33,7 @@ const double PI = 3.1415926;
 
 #define PLOTPATHSET 1
 
+// 几何、感知和行为参数从私有 ROS 命名空间读取，正常调参应修改 launch 文件。
 string pathFolder;
 double vehicleLength = 0.85;
 double vehicleWidth = 0.6;
@@ -80,6 +81,8 @@ float joySpeed = 0;
 float joySpeedRaw = 0;
 float joyDir = 0;
 
+// 离线路径库契约。pathNum 和网格尺寸必须与 path_generator.py 及 paths/ 中的文件一致，
+// 不能只修改 launch 参数。
 const int pathNum = 343;
 const int groupNum = 7;
 float gridVoxelSize = 0.02;
@@ -127,6 +130,7 @@ pcl::VoxelGrid<pcl::PointXYZI> laserDwzFilter, terrainDwzFilter;
 
 void odometryHandler(const nav_msgs::Odometry::ConstPtr& odom)
 {
+  // 用 sensorOffset 将传感器位姿换算为车辆中心位姿，后者用于碰撞检查和候选路径放置。
   odomTime = odom->header.stamp.toSec();
 
   double roll, pitch, yaw;
@@ -144,6 +148,7 @@ void odometryHandler(const nav_msgs::Odometry::ConstPtr& odom)
 void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloud2)
 {
   if (!useTerrainAnalysis) {
+    // 原始点云模式是地形图模式的替代方案：仅保留近处点，并在昂贵的路径碰撞循环前下采样。
     laserCloud->clear();
     pcl::fromROSMsg(*laserCloud2, *laserCloud);
 
@@ -177,6 +182,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloud2)
 void terrainCloudHandler(const sensor_msgs::PointCloud2ConstPtr& terrainCloud2)
 {
   if (useTerrainAnalysis) {
+    // 地形图 intensity 是相对地面高度，不是雷达反射强度；保留硬障碍，也可将较低高度作为软代价。
     terrainCloud->clear();
     pcl::fromROSMsg(*terrainCloud2, *terrainCloud);
 
@@ -209,6 +215,7 @@ void terrainCloudHandler(const sensor_msgs::PointCloud2ConstPtr& terrainCloud2)
 
 void joystickHandler(const sensor_msgs::Joy::ConstPtr& joy)
 {
+  // PS3 风格轴提供手动行驶方向和速度；触发轴还选择自主模式及是否启用障碍检查。
   joyTime = ros::Time::now().toSec();
 
   joySpeedRaw = sqrt(joy->axes[3] * joy->axes[3] + joy->axes[4] * joy->axes[4]);
@@ -256,6 +263,7 @@ void speedHandler(const std_msgs::Float32::ConstPtr& speed)
 
 void boundaryHandler(const geometry_msgs::PolygonStamped::ConstPtr& boundary)
 {
+  // 将多边形每条边离散成稠密的高 intensity 障碍点；重复点使其达到规划器的碰撞阈值。
   boundaryCloud->clear();
   pcl::PointXYZI point, point1, point2;
   int boundarySize = boundary->polygon.points.size();
@@ -295,6 +303,7 @@ void boundaryHandler(const geometry_msgs::PolygonStamped::ConstPtr& boundary)
 
 void addedObstaclesHandler(const sensor_msgs::PointCloud2ConstPtr& addedObstacles2)
 {
+  // 外部标注无论原始数值为何，始终视为硬障碍。
   addedObstacles->clear();
   pcl::fromROSMsg(*addedObstacles2, *addedObstacles);
 
@@ -320,6 +329,7 @@ void twoWayDriveHandler(const std_msgs::Bool::ConstPtr& twoWayDr)
 
 int readPlyHeader(FILE *filePtr)
 {
+  // 规划器 PLY 均为 ASCII 格式；后续按生成器固定行布局解析前，只需读取顶点数。
   char str[50];
   int val, pointNum;
   string strCur, strLast;
@@ -347,6 +357,7 @@ int readPlyHeader(FILE *filePtr)
 
 void readStartPaths()
 {
+  // 起始路径是每个输出组的短代表路径。实际发布的是选中的组，而非 343 条测试曲线之一。
   string fileName = pathFolder + "/startPaths.ply";
 
   FILE *filePtr = fopen(fileName.c_str(), "r");
@@ -381,6 +392,7 @@ void readStartPaths()
 #if PLOTPATHSET == 1
 void readPaths()
 {
+  // 完整路径在加载时下采样并供可视化使用；碰撞检查本身使用预计算的对应表。
   string fileName = pathFolder + "/paths.ply";
 
   FILE *filePtr = fopen(fileName.c_str(), "r");
@@ -422,6 +434,7 @@ void readPaths()
 
 void readPathList()
 {
+  // 保存候选路径所属分组和末端方向，以供后续评分。
   string fileName = pathFolder + "/pathList.ply";
 
   FILE *filePtr = fopen(fileName.c_str(), "r");
@@ -460,6 +473,7 @@ void readPathList()
 
 void readCorrespondences()
 {
+  // 每行格式为：体素编号、零个或多个被阻塞路径编号、-1 结束标记；该倒排索引是规划器的关键优化。
   string fileName = pathFolder + "/correspondences.txt";
 
   FILE *filePtr = fopen(fileName.c_str(), "r");
@@ -577,7 +591,7 @@ int main(int argc, char** argv)
   ros::Publisher pubFreePaths = nh.advertise<sensor_msgs::PointCloud2> ("/free_paths", 2);
   #endif
 
-  //ros::Publisher pubLaserCloud = nh.advertise<sensor_msgs::PointCloud2> ("/stacked_scans", 2);
+  // 如需查看叠加扫描，可在此处恢复对应发布者。
 
   printf ("\nReading path files.\n");
 
@@ -620,6 +634,7 @@ int main(int argc, char** argv)
   while (status) {
     ros::spinOnce();
 
+    // 每次感知更新触发一次完整重规划；启用时使用 terrain_map，否则使用 registered_scan。
     if (newLaserCloud || newTerrainCloud) {
       if (newLaserCloud) {
         newLaserCloud = false;
@@ -697,6 +712,7 @@ int main(int argc, char** argv)
         }
       }
 
+      // 将所有障碍表示到车体系。候选路径也定义在该系中，+x 朝前、+y 朝左。
       float pathRange = adjacentRange;
       if (pathRangeBySpeed) pathRange = adjacentRange * joySpeed;
       if (pathRange < minPathRange) pathRange = minPathRange;
@@ -704,6 +720,7 @@ int main(int argc, char** argv)
       float relativeGoalDis = adjacentRange;
 
       if (autonomyMode) {
+        // 自主模式中，用 map 坐标系目标替代手柄方向。
         float relativeGoalX = ((goalX - vehicleX) * cosVehicleYaw + (goalY - vehicleY) * sinVehicleYaw);
         float relativeGoalY = (-(goalX - vehicleX) * sinVehicleYaw + (goalY - vehicleY) * cosVehicleYaw);
 
@@ -724,6 +741,7 @@ int main(int argc, char** argv)
       bool isReverse = false;
       
       while (pathScale >= minPathScale && pathRange >= minPathRange) {
+        // 找不到可行路径时逐步缩小候选范围，较短路径更可能穿过车辆近处的拥挤区域。
         for (int i = 0; i < 36 * pathNum; i++) {
           clearPathList[i] = 0;
           pathPenaltyList[i] = 0;
@@ -773,6 +791,7 @@ int main(int argc, char** argv)
               int indY = int((gridVoxelOffsetY + gridVoxelSize / 2 - y2 / scaleY) / gridVoxelSize);
               if (indX >= 0 && indX < gridVoxelNumX && indY >= 0 && indY < gridVoxelNumY) {
                 int ind = gridVoxelNumY * indX + indY;
+                // 一个占据体素会阻塞所有扫掠车体区域覆盖它的候选路径，无需在线逐条做几何查询。
                 int blockedPathByVoxelNum = correspondences[ind].size();
                 for (int j = 0; j < blockedPathByVoxelNum; j++) {
                   if (h > obstacleHeightThre || !useTerrainAnalysis) {
@@ -815,6 +834,7 @@ int main(int argc, char** argv)
           }
 
           if (clearPathList[i] < pointPerPathThre) {
+            // 碰撞数低于硬阈值的候选路径可行；较低的地形高度可选地作为软代价降低分数。
             float penaltyScore = 1.0 - pathPenaltyList[i] / costHeightThre;
             if (penaltyScore < costScore) penaltyScore = costScore;
 
@@ -864,6 +884,7 @@ int main(int argc, char** argv)
             float dis = sqrt(x * x + y * y);
 
             if (dis <= pathRange / pathScale && dis <= relativeGoalDis2 / pathScale) {
+              // 在规划时刻的车体系发布选中组；z 的正负是紧凑的前进/倒退方向标记。
               path.poses[i].pose.position.x = pathScale * (cos(rotAng) * x - sin(rotAng) * y);
               path.poses[i].pose.position.y = pathScale * (sin(rotAng) * x + cos(rotAng) * y);
               if (isReverse) path.poses[i].pose.position.z = -0.001;

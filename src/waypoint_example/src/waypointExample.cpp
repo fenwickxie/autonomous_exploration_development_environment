@@ -27,6 +27,7 @@ using namespace std;
 
 const double PI = 3.1415926;
 
+// 一个刻意保持简单的任务级状态机：每次发布一个目标，到达后等待，再切换下一个；运动决策交给规划器。
 string waypoint_file_dir;
 string boundary_file_dir;
 double waypointXYRadius = 0.5;
@@ -45,7 +46,7 @@ pcl::PointCloud<pcl::PointXYZ>::Ptr boundary(new pcl::PointCloud<pcl::PointXYZ>(
 float vehicleX = 0, vehicleY = 0, vehicleZ = 0;
 double curTime = 0, waypointTime = 0;
 
-// reading waypoints from file function
+// 将恰含 x/y/z 顶点列的 ASCII PLY 解析为有序任务列表。
 void readWaypointFile()
 {
   FILE* waypoint_file = fopen(waypoint_file_dir.c_str(), "r");
@@ -95,7 +96,7 @@ void readWaypointFile()
   fclose(waypoint_file);
 }
 
-// reading boundary from file function
+// 解析导航多边形；localPlanner 会将边离散为障碍物。
 void readBoundaryFile()
 {
   FILE* boundary_file = fopen(boundary_file_dir.c_str(), "r");
@@ -145,7 +146,7 @@ void readBoundaryFile()
   fclose(boundary_file);
 }
 
-// vehicle pose callback function
+// 航点状态机使用项目标准的 map 坐标系位姿反馈。
 void poseHandler(const nav_msgs::Odometry::ConstPtr& pose)
 {
   curTime = pose->header.stamp.toSec();
@@ -184,10 +185,10 @@ int main(int argc, char** argv)
   geometry_msgs::PolygonStamped boundaryMsgs;
   boundaryMsgs.header.frame_id = "map";
 
-  // read waypoints from file
+  // 启动时仅读取一次不可变任务数据；文件损坏或为空会直接退出，避免发布未定义目标造成不安全自主行为。
   readWaypointFile();
 
-  // read boundary from file
+  // 从文件读取边界
   if (sendBoundary) {
     readBoundaryFile();
 
@@ -217,19 +218,19 @@ int main(int argc, char** argv)
     float disY = vehicleY - waypoints->points[wayPointID].y;
     float disZ = vehicleZ - waypoints->points[wayPointID].z;
 
-    // start waiting if the current waypoint is reached
+    // 到达判定同时要求水平半径和允许的垂直高度差。
     if (sqrt(disX * disX + disY * disY) < waypointXYRadius && fabs(disZ) < waypointZBound && !isWaiting) {
       waitTimeStart = curTime;
       isWaiting = true;
     }
 
-    // move to the next waypoint after waiting is over
+    // 抵达最后一个航点后仍保持该目标，本节点不会循环航点。
     if (isWaiting && waitTimeStart + waitTime < curTime && wayPointID < waypointSize - 1) {
       wayPointID++;
       isWaiting = false;
     }
 
-    // publish waypoint, speed, and boundary messages at certain frame rate
+    // 以受限频率刷新任务命令，使后启动的订阅者也能获得当前状态。
     if (curTime - waypointTime > 1.0 / frameRate) {
       if (!isWaiting) {
         waypointMsgs.header.stamp = ros::Time().fromSec(curTime);
