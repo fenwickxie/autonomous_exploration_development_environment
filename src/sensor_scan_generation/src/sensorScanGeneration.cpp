@@ -21,25 +21,30 @@
 using namespace std;
 
 // 此节点为需要传感器坐标系扫描及精确采集时刻位姿的算法适配 map 坐标系已配准扫描。
-pcl::PointCloud<pcl::PointXYZ>::Ptr laserCloudIn(new pcl::PointCloud<pcl::PointXYZ>());
-pcl::PointCloud<pcl::PointXYZ>::Ptr laserCLoudInSensorFrame(new pcl::PointCloud<pcl::PointXYZ>());
+pcl::PointCloud<pcl::PointXYZ>::Ptr laserCloudIn(new pcl::PointCloud<pcl::PointXYZ>()); // 存储从上游接收到的点云
+pcl::PointCloud<pcl::PointXYZ>::Ptr laserCLoudInSensorFrame(new pcl::PointCloud<pcl::PointXYZ>()); // 存储转换到传感器坐标系的点云
 
-double robotX = 0;
-double robotY = 0;
-double robotZ = 0;
-double roll = 0;
-double pitch = 0;
-double yaw = 0;
+double robotX = 0; // 机器人在地图坐标系中的 X 位置
+double robotY = 0; // 机器人在地图坐标系中的 Y 位置
+double robotZ = 0; // 机器人在地图坐标系中的 Z 位置
+double roll = 0; // 机器人在地图坐标系中的滚转角
+double pitch = 0; // 机器人在地图坐标系中的俯仰角
+double yaw = 0; // 机器人在地图坐标系中的偏航角
 
-bool newTransformToMap = false;
+bool newTransformToMap = false; // 标记是否有新的从传感器到地图的变换
 
-nav_msgs::Odometry odometryIn;
-ros::Publisher *pubOdometryPointer = NULL;
-tf::StampedTransform transformToMap;
-tf::TransformBroadcaster *tfBroadcasterPointer = NULL;
+nav_msgs::Odometry odometryIn; // 存储最新的里程计信息
+ros::Publisher *pubOdometryPointer = NULL; // 指向里程计发布者的指针，方便在回调中使用
+tf::StampedTransform transformToMap; // 存储从传感器到地图的变换
+tf::TransformBroadcaster *tfBroadcasterPointer = NULL; //指向TF变换发布者的指针，方便在回调中使用
 
-ros::Publisher pubLaserCloud;
+ros::Publisher pubLaserCloud; // 发布转换到传感器坐标系的点云
 
+/**
+ * @brief 处理来自上游的里程计和点云消息，将点云转换到传感器坐标系并发布
+ * @param odometry 上游里程计消息
+ * @param laserCloud2 上游点云消息
+ */
 void laserCloudAndOdometryHandler(const nav_msgs::Odometry::ConstPtr& odometry,
                                   const sensor_msgs::PointCloud2ConstPtr& laserCloud2)
 {

@@ -29,7 +29,7 @@ const double PI = 3.1415926;
 
 // 外部 SLAM 适配配置。不同 LOAM 变体的话题和坐标轴定义可能不同，因此保持可配置。
 string stateEstimationTopic = "/integrated_to_init";
-string registeredScanTopic = "/velodyne_cloud_registered";
+string registeredScanTopic = "/velodyne_cloud_registered"; 
 bool flipStateEstimation = true;
 bool flipRegisteredScan = true;
 bool sendTF = true;

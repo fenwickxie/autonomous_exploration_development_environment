@@ -27,59 +27,59 @@ using namespace std;
 const double PI = 3.1415926;
 
 // 从 terrain_analysis.launch 读取的配置，定义时序地图窗口、点高度范围和障碍解释方式。
-double scanVoxelSize = 0.05;
-double decayTime = 2.0;
-double noDecayDis = 4.0;
-double clearingDis = 8.0;
-bool clearingCloud = false;
-bool useSorting = true;
-double quantileZ = 0.25;
-bool considerDrop = false;
-bool limitGroundLift = false;
-double maxGroundLift = 0.15;
-bool clearDyObs = false;
-double minDyObsDis = 0.3;
-double minDyObsAngle = 0;
-double minDyObsRelZ = -0.5;
-double absDyObsRelZThre = 0.2;
-double minDyObsVFOV = -16.0;
-double maxDyObsVFOV = 16.0;
-int minDyObsPointNum = 1;
-bool noDataObstacle = false;
-int noDataBlockSkipNum = 0;
-int minBlockPointNum = 10;
-double vehicleHeight = 1.5;
-int voxelPointUpdateThre = 100;
-double voxelTimeUpdateThre = 2.0;
-double minRelZ = -1.5;
-double maxRelZ = 0.2;
-double disRatioZ = 0.2;
+double scanVoxelSize = 0.05; // 扫描点云体素滤波尺寸，用于下采样，单位为米
+double decayTime = 2.0; // 衰减时间，用于动态障碍的时间衰减
+double noDecayDis = 4.0; // 无衰减距离，用于动态障碍的空间衰减
+double clearingDis = 8.0; // 清除距离，用于动态障碍的空间清除
+bool clearingCloud = false; // 是否清除点云，用于动态障碍的空间清除
+bool useSorting = true; // 是否使用排序，排序点云以提高处理效率
+double quantileZ = 0.25; // 高程分位数，用于地面高度估计
+bool considerDrop = false; // 是否考虑落差
+bool limitGroundLift = false; // 是否限制地面抬升，地面抬升指的是地面高度相对于之前估计的提升
+double maxGroundLift = 0.15; // 最大地面抬升
+bool clearDyObs = false; // 是否清除动态障碍
+double minDyObsDis = 0.3; // 动态障碍最小距离，用于判断动态障碍是否接近车辆
+double minDyObsAngle = 0; // 动态障碍最小角度，用于判断动态障碍是否接近车辆的角度限制
+double minDyObsRelZ = -0.5; // 动态障碍最小相对高度，相对于地面的高度
+double absDyObsRelZThre = 0.2; // 动态障碍相对高度阈值，用于判断动态障碍的高度变化是否显著
+double minDyObsVFOV = -16.0; // 动态障碍最小垂直视场，指的是动态障碍在垂直方向上的可见范围下限
+double maxDyObsVFOV = 16.0; // 动态障碍最大垂直视场，指的是动态障碍在垂直方向上的可见范围上限
+int minDyObsPointNum = 1; // 动态障碍最小点数
+bool noDataObstacle = false; // 无数据是否视为障碍
+int noDataBlockSkipNum = 0; // 无数据块跳过数量
+int minBlockPointNum = 10; // 最小块点数
+double vehicleHeight = 1.5; // 车辆高度
+int voxelPointUpdateThre = 100; // 体素点更新阈值
+double voxelTimeUpdateThre = 2.0; // 体素时间更新阈值
+double minRelZ = -1.5; // 最小相对高度，指的是相对车辆的高度
+double maxRelZ = 0.2; // 最大相对高度，指的是相对车辆的高度
+double disRatioZ = 0.2; // 高度距离比
 
 // 以车辆为中心的 21 x 21 滚动三维点云格；车辆跨越格边界时复用对应单元。
-float terrainVoxelSize = 1.0;
-int terrainVoxelShiftX = 0;
-int terrainVoxelShiftY = 0;
-const int terrainVoxelWidth = 21;
-int terrainVoxelHalfWidth = (terrainVoxelWidth - 1) / 2;
+float terrainVoxelSize = 1.0; // 每个格子大小，单位为米
+int terrainVoxelShiftX = 0; // 车辆在三维点云格中的 X 方向偏移
+int terrainVoxelShiftY = 0; // 车辆在三维点云格中的 Y 方向偏移
+const int terrainVoxelWidth = 21; // 三维点云格的宽度（格子数量）
+int terrainVoxelHalfWidth = (terrainVoxelWidth - 1) / 2; 
 const int terrainVoxelNum = terrainVoxelWidth * terrainVoxelWidth;
 
-// 更稠密的二维高程网格，仅用于估计局部地面高度。
-float planarVoxelSize = 0.2;
-const int planarVoxelWidth = 51;
-int planarVoxelHalfWidth = (planarVoxelWidth - 1) / 2;
-const int planarVoxelNum = planarVoxelWidth * planarVoxelWidth;
+// 更稠密的二维高程网格，仅用于估计局部地面高度。高程网格指的是在二维平面上划分的网格，每个格子存储对应区域的地面高度信息。
+float planarVoxelSize = 0.2; // 每个格子大小，单位为米
+const int planarVoxelWidth = 51; // 二维高程网格的宽度（格子数量）
+int planarVoxelHalfWidth = (planarVoxelWidth - 1) / 2; // 二维高程网格的半宽度（格子数量的一半）
+const int planarVoxelNum = planarVoxelWidth * planarVoxelWidth; 
 
 pcl::PointCloud<pcl::PointXYZI>::Ptr
-    laserCloud(new pcl::PointCloud<pcl::PointXYZI>());
+    laserCloud(new pcl::PointCloud<pcl::PointXYZI>()); // 原始激光点云
 pcl::PointCloud<pcl::PointXYZI>::Ptr
-    laserCloudCrop(new pcl::PointCloud<pcl::PointXYZI>());
+    laserCloudCrop(new pcl::PointCloud<pcl::PointXYZI>()); // 裁剪后的激光点云
 pcl::PointCloud<pcl::PointXYZI>::Ptr
-    laserCloudDwz(new pcl::PointCloud<pcl::PointXYZI>());
+    laserCloudDwz(new pcl::PointCloud<pcl::PointXYZI>()); // 下采样后的激光点云
 pcl::PointCloud<pcl::PointXYZI>::Ptr
-    terrainCloud(new pcl::PointCloud<pcl::PointXYZI>());
+    terrainCloud(new pcl::PointCloud<pcl::PointXYZI>()); // 地形点云
 pcl::PointCloud<pcl::PointXYZI>::Ptr
-    terrainCloudElev(new pcl::PointCloud<pcl::PointXYZI>());
-pcl::PointCloud<pcl::PointXYZI>::Ptr terrainVoxelCloud[terrainVoxelNum];
+    terrainCloudElev(new pcl::PointCloud<pcl::PointXYZI>()); // 地形点云的高程信息
+pcl::PointCloud<pcl::PointXYZI>::Ptr terrainVoxelCloud[terrainVoxelNum]; // 三维点云格对应的点云数组
 
 int terrainVoxelUpdateNum[terrainVoxelNum] = {0};
 float terrainVoxelUpdateTime[terrainVoxelNum] = {0};

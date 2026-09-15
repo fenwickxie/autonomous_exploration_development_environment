@@ -137,7 +137,7 @@ roslaunch vehicle_simulator system_real_robot.launch use_joystick:=true
 
 | 话题 | 类型 | 发布者 | 消费者 | 契约 |
 | --- | --- | --- | --- | --- |
-| `/state_estimation` | `nav_msgs/Odometry` | 仿真器或 LOAM 适配器 | 地形、规划、跟踪、统计等 | 全局位姿。`header.frame_id=map`，`child_frame_id=sensor`，长度为米、角度为弧度。 |
+| `/state_estimation` | `nav_msgs/Odometry` | 仿真器或 LOAM 适配器 | 地形、规划、跟踪、统计等 | 全局位姿。`header.frame_id=map`，`child_frame_id=sensor`，长度为米、角度为弧度；`pose.position.z` 是 `sensor` 原点的地图高度，不自动等同于车辆几何中心或底盘底面高度。 |
 | `/registered_scan` | `sensor_msgs/PointCloud2` | 仿真器或 LOAM 适配器 | 地形、规划、统计、扫描生成器 | 已变换到 `map` 的点云。建议使用 `PointXYZI`；适配器可把无 intensity 的输入补为零。 |
 | `/terrain_map` | `sensor_msgs/PointCloud2` | `terrainAnalysis` | 局部规划器、仿真器、扩展地形 | `xyz` 是地图坐标；`intensity` 是相对地面的高差/通行代价，不能当作雷达反射强度。 |
 | `/path` | `nav_msgs/Path` | `localPlanner` | `pathFollower` | 局部路径。其坐标相对“路径接收时的车辆姿态”，不是绝对 `map` 路径。`z` 的正负用作前进/倒退标记。 |
@@ -172,31 +172,328 @@ roslaunch vehicle_simulator system_real_robot.launch use_joystick:=true
 
 ### 7.2 地形分析
 
-`terrainAnalysis` 在车辆周围维护 $21 \times 21$ 个边长 1 m 的滚动体素。它裁剪高度范围内的配准点云，按时间衰减旧点并下采样；随后在 $0.2$ m 平面栅格中估计地面高度，输出每个有效点相对地面的高度。
+`terrainAnalysis` 的输出不是原始点云，而是带有局部地形代价的 `/terrain_map`。输入 `/registered_scan` 中的点已经在 `map` 坐标系，节点以车辆为中心维护 $21 \times 21$ 个边长 1 m 的滚动三维体素，再投影到 $0.2$ m 的二维平面网格估计局部地面。最终输出点的 `xyz` 仍是地图坐标，`intensity` 被重写为相对地面的高度差或通行代价，不能再解释为激光反射强度。
 
-关键参数：
+#### 处理流程
 
-- `scanVoxelSize`：点云下采样分辨率，减小会提高细节与 CPU 开销。
-- `decayTime` 与 `noDecayDis`：远处旧观测的保留时间与近处不衰减半径。
-- `minRelZ`、`maxRelZ`、`disRatioZ`：相对车辆的高度裁剪带。
-- `vehicleHeight`：高差达到该高度以上的点不会作为可通行地形输出。
-- `considerDrop`：将下坠也视为障碍，适合有台阶或坑洞的场景。
-- `noDataObstacle`：把无观测区域标为障碍，安全性更高但更保守。
+1. **裁剪输入点云**：只保留车辆附近、且相对于 `/state_estimation` 中 `sensor` 原点高度的点。点必须满足 `minRelZ - disRatioZ * distance < point.z - vehicleZ < maxRelZ + disRatioZ * distance`。这里的 `vehicleZ` 是代码变量名，实际来自 `odom.pose.pose.position.z`，不是程序自动推算出的车体几何中心高度。
+2. **滚动体素和时间更新**：点按 1 m 体素存入车辆中心附近的滚动窗口。车辆移动跨过体素边界时，网格通过移动指针复用单元；体素达到 `voxelPointUpdateThre` 个新点，或超过 `voxelTimeUpdateThre` 秒未更新时，才下采样并清理旧点。
+3. **估计地面高度**：每个 $0.2$ m 平面格收集附近点的高度。`useSorting=true` 时使用 `quantileZ` 分位数，默认最低点附近的低分位值更接近地面；否则使用该格的最低点。邻近 $3 \times 3$ 个格会共享点，以减少格边界跳变。
+4. **计算障碍高差**：对每个点计算 $disZ = z - z_{ground}$。默认只把高于地面的点作为障碍候选；`considerDrop=true` 时使用 $|disZ|$，因此坑洼和突起都会产生代价。
+5. **输出或过滤**：只有格内地面支持点不少于 `minBlockPointNum`、高差在 `[0, vehicleHeight)` 范围内、且没有被动态障碍清除规则过滤的点，才会写入 `/terrain_map`。输出点的 `intensity` 就是 `disZ`。
+
+#### 高度参考系与 `vehicleHeight` 的含义
+
+`terrain_analysis` 中的高度差基准是：
+
+```text
+relative_z = point.z - vehicleZ
+vehicleZ = /state_estimation.pose.pose.position.z
+```
+
+因此，`minRelZ` 和 `maxRelZ` 是**相对于 `/state_estimation` 位姿参考点，也就是 `child_frame_id=sensor` 的原点**的高度范围。它们不是相对于地面、激光雷达点云最低点，也不是相对于车辆底盘几何中心，除非上游明确把 `sensor` 原点定义在那里。
+
+例如，若 `sensor` 原点离地 0.75 m，地面点大约满足 `point.z - vehicleZ = -0.75 m`。此时 `minRelZ` 至少要低于这个值，否则地面会在输入裁剪阶段被删除，后续自然无法估计地面或障碍。若传感器安装高度、`sensor` TF 或里程计参考点改变，必须重新检查这两个参数。
+
+这里还有两个同名但不同作用的参数：
+
+- `terrain_analysis.launch` 中的 `vehicleHeight`：不是车辆几何中心高度，也不是传感器安装高度。它是**输出地形点的相对地面高差上限**，代码只输出 `0 <= disZ < vehicleHeight` 的点；开启 `noDataObstacle` 时，未知区域补点的 `intensity` 也使用这个值。因此它更准确的名字应理解为“可通行障碍高度上限/地形代价高度上限”。
+- `vehicle_simulator.launch` 中的 `vehicleHeight`：这是仿真器的运动学参数，参与 `vehicleZ = terrainZ + vehicleHeight`，表示仿真车辆/传感器参考高度相对地面的偏置。它会间接影响 `/state_estimation.pose.pose.position.z`，但不等于 `terrain_analysis` 中的输出高差阈值。
+
+真实机器人使用 `loam_interface` 时，`terrain_analysis` 不会根据机器人实际车高自动修正 `vehicleZ`。应先明确外部 SLAM 的 odometry 原点和 `/sensor` TF，再设置 `minRelZ/maxRelZ`；不要把 `terrain_analysis.vehicleHeight` 当成车体尺寸直接填写。
+
+#### 什么情况下会被认为是障碍
+
+这里没有单独的布尔型 `is_obstacle` 标志，而是把障碍表示为 `/terrain_map` 中的点和其 `intensity` 代价。典型情况包括：
+
+- **地面上方的实体物体**：墙、箱子、树干、车辆、路障、台阶边缘等点相对本地地面有正高差，并且高差低于 `terrain_analysis.vehicleHeight`，会作为障碍代价输出。这里比较的是 `point.z - planarVoxelElev`，不是 `point.z - vehicleZ`。
+- **下凹地形**：仅当 `considerDrop=true` 时，坑、沟和台阶下落的绝对高差也会形成代价；为 `false` 时，低于地面的点通常不会作为障碍输出。
+- **动态或遮挡物**：开启 `clearDyObs` 后，满足距离、视场角和相对高度条件的栅格会被标记为动态障碍候选；达到 `minDyObsPointNum` 后，该格中的点可能被过滤，以避免把行人、车辆或临时遮挡物长期写入静态地形图。
+- **未知区域**：开启 `noDataObstacle` 且车辆已经移动至少 `noDecayDis` 后，观测点数少于 `minBlockPointNum` 的平面格会被当作未知障碍，并按 `noDataBlockSkipNum` 扩张边界。当前 launch 中 `noDataObstacle=false`，所以默认不会把未知区域直接当障碍。
+
+注意：`minRelZ`、`maxRelZ` 是相对 `sensor` 原点的输入裁剪范围，不是障碍高度阈值；`terrain_analysis.vehicleHeight` 是相对地面的输出高差上限。一个点如果在输入阶段就被裁掉，后面不会再参与地面或障碍判断。
+
+#### 参数分类与作用
+
+**点云分辨率与计算量**
+
+- `scanVoxelSize`：体素下采样尺寸。减小可保留更细的障碍边缘，但会增加点数、内存和 CPU；增大更快，但细杆、窄墙和小障碍可能消失。
+- `voxelPointUpdateThre`：单个滚动体素积累多少新点后触发更新。较小会更及时但更新更频繁；较大可降低开销，但地图响应更慢。
+- `voxelTimeUpdateThre`：体素最长多久没有更新就强制刷新。较小能更快清理过期数据，较大能减少重复计算。
+
+**时间记忆与清理**
+
+- `decayTime`：远离车辆的历史点保留时间。减小可抑制动态障碍拖影，但可能导致稀疏区域地图断裂；增大地图更连续，但旧障碍消失更慢。
+- `noDecayDis`：车辆周围不轻易衰减的半径。应覆盖车辆近期仍需要稳定判断的区域；过大可能保留动态物体，过小可能造成近场闪烁。
+- `clearingDis`：收到 `/map_clearing` 或手柄清理请求时的清除半径。它只影响显式清理，不等同于自然时间衰减。
+
+**地面估计**
+
+- `useSorting`：是否按高度排序估计地面。当前 launch 设置为 `false`，因此 `quantileZ` 和 `limitGroundLift` 在当前配置下不会实际生效；需要先把 `useSorting` 设为 `true`。
+- `quantileZ`：排序模式下使用的分位数。较小值更接近最低地面，能减少地面上方物体把地面估计抬高的问题；过小则容易受低点噪声、坑洞影响。常见起点是 `0.1` 到 `0.3`。
+- `limitGroundLift`、`maxGroundLift`：限制一帧内估计地面相对最低点的抬升幅度。当地面被障碍物抬高时可开启；`maxGroundLift` 太小会压平真实台阶，太大则抑制效果有限。
+- `minBlockPointNum`：一个平面格至少需要多少点才认为有可靠地面支持。增大可减少稀疏噪声和误检，但会把边缘区域变成无数据；减小能提高覆盖率，但更容易把偶然点当成地面。
+
+**垂直范围和障碍高度**
+
+- `minRelZ`、`maxRelZ`：相对 `/state_estimation` 的 `sensor` 原点的输入点云高度范围。应根据传感器安装高度换算，覆盖“地面到最高需要避让的障碍”，但不要无上限地包含屋顶、树冠等无关结构。若 `sensor` 离地高度为 $h_s$，期望保留地面到传感器上方 $h_o$ 的点，可从 `minRelZ < -h_s`、`maxRelZ > h_o-h_s` 这个关系开始估计。
+- `disRatioZ`：随水平距离增加而放宽上下高度裁剪的比例。传感器远处的定位和地面误差通常更大，可适当增大；过大会引入远处无关点。
+- `vehicleHeight`：`terrain_analysis` 的输出高差上限，表示需要写入地形图的最大相对地面障碍高度，不是车辆几何中心高度、底盘高度或传感器安装高度。过小会漏掉高障碍，过大可能把无需避让的高处结构纳入地图。
+- `considerDrop`：是否把坑和落差也视为风险。室外越野、台阶和沟壑通常应开启；平整室内地面且下视点云噪声较大时可关闭或单独验证。
+
+**动态障碍清除**
+
+- `clearDyObs`：是否启用动态障碍/遮挡清除。开启后，满足条件的栅格不会简单地长期保留为静态障碍；如果场景中需要把行人和车辆也当作必须避让的障碍，应谨慎开启，并结合规划器行为验证。
+- `minDyObsDis`：动态障碍判断的近距离下限。过小可能把车体或近场噪声纳入判断，过大则可能忽略真正靠近车辆的物体。
+- `minDyObsAngle`：点相对地面的最小仰角。增大可排除低矮地面起伏，减小则更容易捕获低矮物体。
+- `minDyObsRelZ`、`absDyObsRelZThre`：动态点的相对高度门槛。它们用于区分地面起伏和具有明显高度变化的遮挡物。
+- `minDyObsVFOV`、`maxDyObsVFOV`：动态判断使用的垂直视场角范围。应与实际雷达安装姿态和有效垂直视场一致；范围过窄会漏检，过宽会把地面或高处结构混入。
+- `minDyObsPointNum`：一个平面格内达到多少动态候选点才执行清除。设为 `1` 很敏感，适合点云稀疏但误删风险较高；增大可提高稳定性。
+
+**未知区域安全策略**
+
+- `noDataObstacle`：是否把没有足够观测的格子视为障碍。开启更安全但更保守，可能导致规划器无路；室内遮挡多或需要谨慎探索时可开启，开阔且点云稀疏的场景通常先关闭。
+- `noDataBlockSkipNum`：未知区域边界扩张的网格步数。增大会扩大安全余量，也会进一步压缩可规划空间。该参数只有在 `noDataObstacle=true` 且系统完成移动初始化后才有意义。
+
+#### 当前 launch 默认值的解读
+
+当前配置在 [terrain_analysis/launch/terrain_analysis.launch](../src/terrain_analysis/launch/terrain_analysis.launch#L4-L29) 中表现为：
+
+- `scanVoxelSize=0.05`：分辨率较细，适合保留小障碍，但计算量较高。
+- `decayTime=2.0`、`noDecayDis=4.0`：远处点保留约 2 秒，车辆周围 4 m 内更稳定，偏向减少近场闪烁。
+- `useSorting=false`：当前使用每格最低点估计地面，`quantileZ=0.25` 和地面抬升限制暂未启用。
+- `considerDrop=true`：坑洼、台阶下落与突起一样会产生风险代价，偏向越野安全。
+- `clearDyObs=true`、`minDyObsPointNum=1`：动态清除较敏感，单个满足条件的候选点就可能触发过滤，应特别检查稀疏噪声和行人/车辆场景。
+- `noDataObstacle=false`：未知区域默认不直接阻塞规划，地图覆盖不足时仍可能允许路径通过。
+- `minBlockPointNum=10`：要求每格有一定观测支持，能过滤少量孤立点，但在稀疏雷达或远距离区域可能造成覆盖不足。
+- `terrain_analysis.vehicleHeight=0.5`、`minRelZ=-2.5`、`maxRelZ=1.0`：这里的 `0.5` 是地形输出高差上限，不是车高；输入范围则是相对 `sensor` 原点的高度范围。是否合理必须结合 `/state_estimation` 的 `sensor` 原点离地高度检查，例如传感器离地约 0.75 m 时，地面相对高度约为 -0.75 m，能够落在当前 `[-2.5, 1.0]` 范围内。
+
+#### 推荐调参流程
+
+建议在 launch 文件中调参，每次只改一个主要参数，并固定场景、速度和传感器配置。每次修改后至少观察 `/registered_scan`、`/terrain_map`、规划路径和车辆实际运动，必要时录制 rosbag 对比。
+
+1. **先确认输入契约**：检查 `/registered_scan` 是否在 `map` 坐标系，点云和 `/state_estimation` 时间戳是否同源；输入坐标错时，任何阈值都无法补救。
+2. **先调垂直裁剪**：先确认 `/state_estimation.pose.pose.position.z` 对应的 `sensor` 原点离地高度，再根据传感器安装位置和障碍尺寸设置 `minRelZ`、`maxRelZ`、`disRatioZ`，确认地面和目标障碍都能进入输入点云。不要用 `terrain_analysis.vehicleHeight` 代替传感器安装高度。
+3. **再调地面估计**：若地面被障碍抬高，开启 `useSorting`，从 `quantileZ=0.1~0.3` 试起；若真实台阶被压平，再提高分位数或关闭 `limitGroundLift`。
+4. **再调障碍灵敏度**：用 `scanVoxelSize` 和 `minBlockPointNum` 平衡小障碍检出率与噪声；漏检时先减小体素或点数阈值，误检时反向调整。
+5. **再调动态处理**：只有确认静态障碍、动态物体和传感器视场都正常后，再调 `clearDyObs`、距离、仰角和 VFOV 参数。动态物体需要避让时，不要未经验证就依赖清除功能。
+6. **最后调地图记忆和未知区域**：用 `decayTime`、`noDecayDis` 处理拖影与闪烁；需要保守探索时再开启 `noDataObstacle`，并逐步增加 `noDataBlockSkipNum`。
+7. **最后检查规划联动**：观察 `/terrain_map` 的 `intensity` 是否与实际障碍高度一致，以及 `localPlanner` 是否因为代价或阻塞阈值而完全无路。
+
+#### 典型现象与调整方向
+
+| 现象 | 优先检查和调整 |
+| --- | --- |
+| 地面被抬高，障碍物像地面 | 开启 `useSorting`，降低 `quantileZ`；必要时开启 `limitGroundLift`。 |
+| 小障碍漏检 | 减小 `scanVoxelSize`，降低 `minBlockPointNum`，确认 `maxRelZ` 没有限制掉目标，并检查 `terrain_analysis.vehicleHeight` 这个输出高差上限是否过小。 |
+| 点云噪声造成大量障碍 | 增大 `scanVoxelSize` 或 `minBlockPointNum`，检查 `minRelZ/maxRelZ` 是否包含了无关点。 |
+| 动态物体留下拖影 | 适当减小 `decayTime`，检查 `noDecayDis` 是否过大；再验证 `clearDyObs` 的 VFOV 和距离条件。 |
+| 动态物体被清除后规划直接穿过 | 关闭 `clearDyObs` 做对照，或让动态物体通过外部障碍接口/规划器单独处理，不要把“清除动态点”当作“动态物体安全”。 |
+| 坑洼或台阶没有被阻挡 | 确认 `considerDrop=true`，并检查地面估计是否跨越了落差。 |
+| 未知区域导致规划过于保守 | 保持 `noDataObstacle=false`，或减小 `noDataBlockSkipNum` 与 `minBlockPointNum`。 |
+| 地图闪烁、旧障碍残留 | 检查时间戳和位姿同步，适当减小 `decayTime`，并检查体素更新时间阈值。 |
+| 规划器完全找不到路径 | 先检查 `/terrain_map` 是否为空，再暂时关闭 `checkObstacle` 或提高可接受点数阈值做对照；确认不是地形参数把所有路径都标成高代价。 |
+
+调参时应区分三类问题：**输入点没有进入裁剪范围**、**地面基准估计错误**、**障碍点被输出后规划器拒绝**。分别查看 `/registered_scan`、`/terrain_map` 的点数、`frame_id`、`intensity` 和 `/terrain_map` 频率，比只在 RViz 中观察颜色更容易定位根因。
 
 ### 7.3 局部规划
 
-`localPlanner` 不是在线 A* 或 MPC。它从 `local_planner/paths/` 读取预生成轨迹库：
+`localPlanner` 不是在线 A*、MPC 或逐条轨迹做点到曲线距离计算的规划器，而是“离线生成轨迹库，在线快速筛选”的局部规划器。它接收 `/terrain_map` 或 `/registered_scan`，把障碍变换到车辆局部坐标系，以车辆前方为 `+x`、左侧为 `+y`，在有限范围内从预生成候选轨迹中选择一条并发布 `/path`。
 
-- `startPaths.ply`：7 组用于实际输出的局部路径。
-- `paths.ply`：343 条用于碰撞检测的候选轨迹。
-- `pathList.ply`：候选轨迹终点方向及分组。
-- `correspondences.txt`：每个规划体素会阻塞哪些候选轨迹的倒排表。
+#### 输入、输出与路径库
 
-在线运行时，规划器将障碍转到车体局部坐标，对 36 个朝向旋转候选轨迹，借助倒排表快速累计碰撞数；随后按目标方向、转向幅度、地形代价和安全约束评分，选择最高分路径。`pathScale`、`pathRange` 可以随速度缩小，从而提高高速时的反应能力。
+- `/state_estimation`：提供车辆在 `map` 中的位置和姿态。规划器会减去 `sensorOffsetX/Y`，把传感器位姿换算为车辆中心位姿。
+- `/terrain_map`：`useTerrainAnalysis=true` 时使用。点的 `intensity` 是相对地面的高度差；大于 `obstacleHeightThre` 的点通常作为硬障碍，小于该阈值但大于 `groundHeightThre` 的点可作为软代价。
+- `/registered_scan`：`useTerrainAnalysis=false` 时使用，规划器自行按 `adjacentRange` 裁剪并按 `laserVoxelSize` 下采样。此模式没有 terrain_analysis 提供的地面高差语义。
+- `/way_point`：自主模式下提供地图坐标目标，规划器将其转换到车辆局部坐标并计算期望方向。
+- `/navigation_boundary`、`/added_obstacles`：分别把边界和人工注入点转成硬障碍加入碰撞检查。
+- `/path`：发布在 `vehicle` 坐标系中的局部路径。路径接收时的车辆姿态由 `pathFollower` 保存，因此路径不是固定的全局 `map` 路径。
+
+启动时会从 `pathFolder` 读取：
+
+- `startPaths.ply`：7 个路径组的代表路径，选中组后实际发布这一组的路径。
+- `paths.ply`：343 条候选路径，用于可视化和输出 `/free_paths`，其碰撞关系已离线计算。
+- `pathList.ply`：每条候选路径的终点方向和所属组。
+- `correspondences.txt`：每个规划体素对应哪些候选路径的倒排表，是在线快速碰撞统计的核心。
+
+`path_generator.py` 生成 343 条曲线：路径由一段逐渐转向的起始段和后续控制点组成，再用样条插值生成离散点。脚本还在固定的 `0.02 m` 规划网格上，以 `0.55 m` 搜索半径生成 `correspondences.txt`。因此 `gridVoxelSize`、`searchRadius`、`gridVoxelOffsetX/Y` 和源码中的网格尺寸必须与生成文件一致；只修改 launch 参数而不重新生成路径库，会导致体素索引与倒排表不匹配。
+
+#### 在线规划流程
+
+1. **获取感知更新**：收到新的 `/registered_scan` 或 `/terrain_map` 后触发一次规划。当前 `laserCloudStackNum=1`，因此默认只使用最新一帧；若修改源码启用多帧堆叠，需要重新评估动态障碍拖影。
+2. **统一到车辆坐标系**：将地图点减去车辆位置，再按当前 yaw 旋转；候选路径本身也定义在这个坐标系中。只保留 `adjacentRange` 内的点，并根据 `minRelZ/maxRelZ` 或 terrain 模式筛选高度。
+3. **确定规划范围**：默认 `pathRange = adjacentRange * joySpeed`，再限制不小于 `minPathRange`。速度越低，检查范围越短；但不会低于最小范围。
+4. **按速度调整路径尺度**：开启 `pathScaleBySpeed` 时，`pathScale` 会按 `joySpeed` 缩小，但不低于 `minPathScale`。低速时短路径更容易在拥挤区域找到可行解；高速时路径更长，能提前观察并做更平滑的选择。
+5. **遍历 36 个方向**：每个方向间隔 10 度，候选路径会围绕车辆旋转。`dirThre` 和 `dirToVehicle` 用于排除与目标方向差异过大的旋转方向。
+6. **累计硬碰撞**：障碍点映射到离线网格后，通过 `correspondences.txt` 找到会被该点阻塞的候选路径，并递增其碰撞数。碰撞数达到 `pointPerPathThre` 的路径被淘汰；这相当于允许少量孤立噪声，但拒绝重复命中的真实障碍。
+7. **累计软代价**：terrain 模式下，`groundHeightThre < intensity <= obstacleHeightThre` 的点不会立即阻塞路径，而是记录最大高差，并按 `costHeightThre`、`costScore` 形成惩罚。`useCost=false` 时这部分软代价不参与最终评分。
+8. **路径组评分**：可行路径按目标方向、旋转方向代价和软地形代价累计到 7 个路径组。得分最高的组被选中，并从 `startPaths.ply` 取出代表路径，按 `pathScale` 和旋转角变换后发布。
+9. **逐步放宽搜索**：如果没有可行路径，先按 `pathScaleStep` 缩小路径尺度，再按 `pathRangeStep` 缩小范围；如果允许倒车且正向无路，还会尝试反向规划。`noPathReverse=true` 时会禁止该反向尝试。
+
+#### 障碍判定和特殊输入
+
+- `checkObstacle=false` 时，障碍点不会阻塞候选路径，但路径方向和其他约束仍会运行。它适合调试路径形状，不适合实际行驶。
+- `obstacleHeightThre` 是硬障碍阈值。对 terrain map，它比较的是 `intensity` 高差；对原始点云模式，任何进入范围的点都按障碍处理。
+- `pointPerPathThre` 越小越敏感，越容易挡住路径，也越容易被噪声触发；越大越宽松，但可能漏掉稀疏障碍。
+- `checkRotObstacle=true` 时，规划器还检查车辆当前包络附近的旋转障碍，并限制可能发生碰撞的旋转方向；这对原地转向空间狭窄的场景有帮助，但可能显著减少可选方向。
+- `/navigation_boundary` 的边界线会按 `terrainVoxelSize` 离散，并重复到碰撞阈值，因此边界通常是硬约束。
+- `/added_obstacles` 中的点会被统一设为高强度硬障碍，适合人工禁行点或外部安全模块注入障碍。
+- `pathCropByGoal=true` 时，目标后方或超过目标清空范围的障碍不参与当前路径检查；`goalClearRange` 控制目标附近保留的清空余量。
+
+#### localPlanner 参数调节
+
+**车辆几何和网格契约**
+
+- `vehicleLength`、`vehicleWidth`：用于旋转障碍检查和车辆包络判断。设置过小会漏检擦碰，设置过大会让路径过于保守。
+- `sensorOffsetX`、`sensorOffsetY`：把传感器位姿换算为车辆中心；必须和 TF、仿真器或实机安装位置一致，否则障碍会整体错位。
+- `gridVoxelSize`、`gridVoxelOffsetX/Y`、`searchRadius`：必须和 `paths/` 生成时的配置一致。改变后应运行 `python3 local_planner/paths/path_generator.py`，并确认四个路径文件已更新。
+- `laserVoxelSize`、`terrainVoxelSize`：分别控制原始扫描和 terrain map 的下采样。减小可保留细节但增加碰撞统计，增大则更快但可能丢失细障碍。
+
+**障碍筛选和评分**
+
+- `adjacentRange`：感知和规划的最大水平范围。增大能提前发现障碍，但计算量和误检也增加；它还会影响默认规划范围的上限。
+- `minRelZ`、`maxRelZ`：原始点云模式下的高度裁剪；terrain 模式下主要保留 terrain map 点并依赖其高差。高度范围不包含目标障碍时，后续阈值无法补救。
+- `obstacleHeightThre`：硬障碍门槛。降低会更保守，适合低矮障碍和狭窄通道；提高会减少误阻塞，但可能漏掉可碰撞凸起。
+- `groundHeightThre`、`costHeightThre`：分别定义低高度点的忽略/软代价起点和软代价归一化尺度。应与 terrain_analysis 的地面代价范围配套。
+- `useCost`、`costScore`：是否使用软地形代价以及最低惩罚下限。开启后可在多个无碰撞路径中偏好低起伏路线，但代价过大可能压过目标方向。
+- `checkObstacle`、`checkRotObstacle`：分别控制路径碰撞检查和近车旋转包络检查。调试路径时可暂时关闭，正式运行应结合急停和低速验证。
+- `pointPerPathThre`：一条路径允许的命中点数量。默认 `2` 对孤立噪声有一定容忍；稀疏障碍漏检时降低，噪声过多时提高。
+
+**目标方向和路径尺寸**
+
+- `dirWeight`：目标方向误差在路径组评分中的权重。增大更愿意朝目标走，减小更愿意绕障后保持平滑。
+- `dirThre`：允许参与评分的旋转方向范围，单位为度。过小可能没有候选方向，过大则会考虑很多与目标无关的方向。
+- `dirToVehicle`：决定方向阈值是相对目标方向还是相对车辆前向解释。双向行驶时应结合 `twoWayDrive` 一起验证。
+- `pathScale`、`minPathScale`、`pathScaleStep`：路径长度缩放及无路时的缩小步长。缩小步长过大可能跳过合适尺度，过小则增加重规划计算。
+- `pathRangeBySpeed`、`minPathRange`、`pathRangeStep`：感知/碰撞范围随速度变化的策略。低速范围过小会看不到足够远的障碍，因此 `minPathRange` 不能低于车辆制动和控制需求。
+- `pathCropByGoal`、`goalClearRange`：是否按目标裁剪障碍检查。目标附近允许适当清空，但不应把目标前的真实障碍无条件忽略。
+- `twoWayDrive`、`noPathReverse`：是否允许倒车，以及正向无路时是否尝试反向路径。狭窄环境可允许倒车增加可行性，但跟踪器和底盘必须同样支持倒车。
+
+#### 当前 local_planner.launch 默认值解读
+
+当前 [local_planner/launch/local_planner.launch](../src/local_planner/launch/local_planner.launch) 的关键配置表现为：
+
+- `useTerrainAnalysis=true`、`checkObstacle=true`：使用 terrain map 做碰撞检查，且默认开启障碍检查。
+- `vehicleLength=0.85`、`vehicleWidth=0.6`、`searchRadius=0.55`：车辆包络和离线碰撞搜索半径中等偏保守；修改 `searchRadius` 必须同步重生成对应表。
+- `adjacentRange=4.25`、`pathRangeBySpeed=true`、`minPathRange=1.0`：感知范围较大，但低速时实际检查范围至少保持 1 m。
+- `obstacleHeightThre=0.15`、`pointPerPathThre=2`：对超过 15 cm 的 terrain 高差较敏感，同时允许路径命中少量点。
+- `useCost=false`：当前主要采用硬碰撞筛选，低矮地形代价不会改变路径选择；需要偏好平缓路线时再开启。
+- `pathScale=1.25`、`minPathScale=0.75`、`pathScaleBySpeed=true`：路径长度会随速度缩放，找不到路径时最多缩到 0.75 倍。
+- `pathCropByGoal=true`、`goalClearRange=0.5`：接近目标时减少目标后方无关障碍的影响。
+- `noPathReverse=true`、`twoWayDrive=false`：默认只规划前进路径；若实车支持倒车，需要同时修改两个节点的配置并验证方向符号。
+
+#### 推荐调参流程和典型现象
+
+建议使用固定场景、固定速度，每次只改一组相关参数，并同时观察 `/terrain_map`、`/free_paths`、`/path`、`/cmd_vel`。
+
+1. 先确认 `/state_estimation`、`/registered_scan`、`/terrain_map` 的坐标系、时间戳和车辆中心偏移正确。
+2. 在低速下调车辆几何和感知范围：先确认真实车体不被自己的点云阻塞，再调 `vehicleLength/Width`、`adjacentRange` 和 `minPathRange`。
+3. 再调硬障碍灵敏度：用 `obstacleHeightThre` 和 `pointPerPathThre` 平衡漏检与误阻塞。
+4. 再调路径方向和长度：用 `dirThre`、`dirWeight`、`pathScale`、`pathRangeBySpeed` 处理绕障意愿、反应距离和路径平滑性。
+5. 最后才启用 `useCost`、`checkRotObstacle`、倒车和目标裁剪等行为选项，并验证没有因参数组合导致全路径阻塞。
+
+| 现象 | 优先检查和调整 |
+| --- | --- |
+| `/path` 只有一个原点，车辆停止 | 检查 `/terrain_map` 是否为空、`checkObstacle` 是否阻塞所有路径、`pointPerPathThre` 是否过小，以及 `paths/` 四个文件是否匹配当前网格参数。 |
+| 明明有空隙却规划不过去 | 检查 `vehicleLength/Width` 是否过大、`obstacleHeightThre` 是否过低、`searchRadius` 是否过大，以及 `checkRotObstacle` 是否额外封锁了旋转方向。 |
+| 小障碍漏检 | 减小 `laserVoxelSize/terrainVoxelSize`，降低 `pointPerPathThre` 或 `obstacleHeightThre`；同时确认 terrain_analysis 没有先裁掉障碍。 |
+| 噪声导致路径频繁变化 | 增大下采样尺寸或 `pointPerPathThre`，适当提高 `obstacleHeightThre`，并检查地形图的 `intensity` 是否稳定。 |
+| 车辆总想朝错误方向走 | 检查 `/way_point` 是否为 `map` 坐标，调大 `dirWeight` 或合理增大 `dirThre`，并核对 `dirToVehicle` 与 `twoWayDrive`。 |
+| 遇到障碍绕行太晚 | 增大 `minPathRange` 或关闭过强的按速度缩小，确认 `adjacentRange` 和 `pathScale` 足够覆盖制动距离。 |
+| 路径过于保守、绕行幅度大 | 减小车辆几何尺寸或 `searchRadius`，提高 `obstacleHeightThre`，增大 `pointPerPathThre`；每次只调整一个因素。 |
+| 目标附近路径被截断 | 检查 `pathCropByGoal` 和 `goalClearRange`，确认目标点没有错误地落在车辆后方或坐标系不一致。 |
+| 倒车方向异常 | 同时检查 `twoWayDrive`、`noPathReverse`、路径首点 `z` 的前进/倒车标记，以及 pathFollower 的方向切换逻辑。 |
+
+最后要区分三类故障：**没有收到或错误解释障碍**、**候选轨迹确实被阻塞**、**路径发布后跟踪器没有正确执行**。先看 `/terrain_map` 和 `/free_paths`，再看 `/path` 的 `frame_id` 与点坐标，最后看 `/cmd_vel`，不要只根据车辆是否移动判断规划器本身是否正常。
 
 ### 7.4 跟踪控制
 
-`pathFollower` 接收路径时记录当前车辆位姿，将后续实时位姿换算回路径局部系。它选择距离大于 `lookAheadDis` 的前视点，按航向误差产生偏航角速度，并对速度施加路径末端减速、最大加速度、坡度减速及安全停止逻辑。
+`pathFollower` 是一个基于前视点的局部路径跟踪器，不重新规划路径。它接收 `localPlanner` 发布的 `vehicle` 坐标系局部路径，在收到路径的瞬间保存车辆参考位姿；后续每次读取 `/state_estimation` 时，把当前车辆位置变换回该参考系，再根据前视点计算偏航误差和 `/cmd_vel`。
+
+#### 跟踪流程
+
+1. **冻结路径参考系**：收到 `/path` 后复制路径点，并保存接收时的 `vehicleXRec/YRec/ZRec` 和 yaw。路径点因此可以保持在规划瞬间的车辆局部系，而不必每次重写成 `map` 坐标。
+2. **选择前视点**：从当前 `pathPointID` 开始，只要车辆到该点的距离小于 `lookAheadDis`，就推进到下一个点。最终点的方向决定当前期望航向。
+3. **计算方向误差**：将车辆当前 yaw 与路径参考 yaw、前视方向相减，并归一化到 $[-\pi,\pi]$。误差大时先减速，误差小时才逐步加速。
+4. **决定前进或倒车**：`twoWayDrive=true` 时，方向误差超过 90 度并持续 `switchTimeThre` 后切换 `navFwd`；否则保持当前方向，避免在临界角附近来回振荡。
+5. **生成角速度**：车辆接近静止时使用 `stopYawRateGain`，正常运动使用 `yawRateGain`，结果限制在 `maxYawRate`。手动模式且速度为零时，手柄 yaw 可直接控制原地转向，除非 `noRotAtStop=true`。
+6. **生成线速度**：自主模式下由 `/speed` 或 `autonomySpeed` 提供目标比例，手柄输入会在一段时间内优先；控制器用 `maxAccel/100` 限制每个 100 Hz 周期的速度变化。
+7. **末端减速和停车**：到路径末端时按 `endDis/slowDwnDisThre` 降速；路径只有一个点、距离小于 `stopDisThre` 或 `noRotAtGoal=true` 时停止相应运动。
+8. **坡度保护和安全覆盖**：可选地根据姿态角速度减速、根据 roll/pitch 停车；`/stop` 的值为 1 时清零线速度，值为 2 时同时清零角速度，优先级高于普通路径控制。
+
+#### 控制输出的含义
+
+- `/cmd_vel.linear.x`：前进为正、倒车为负，单位 m/s。
+- `/cmd_vel.angular.z`：偏航角速度，单位 rad/s；launch 中 `maxYawRate` 以度/秒配置，代码在输出时转换为弧度/秒。`yawRateGain` 和 `stopYawRateGain` 是航向误差增益，本身不是角度单位。
+- 控制循环为 100 Hz，因此 `maxAccel=2.5` 表示每周期最多改变约 `0.025 m/s`，不是一次性把速度改变 2.5 m/s。
+- `/path` 的 `frame_id` 应为 `vehicle`，并且路径点应与规划器发布时的参考姿态一致。若把全局 `map` 路径误发给跟踪器，车辆会产生明显方向错误。
+
+#### pathFollower 参数调节
+
+**前视和转向**
+
+- `lookAheadDis`：前视距离。增大能让运动更平滑、减少左右摆动，但转弯切入变晚；减小反应更快，但容易抖动。低速或狭窄环境先从 `0.4~0.6 m` 试起。
+- `yawRateGain`：正常行驶的航向误差增益。增大转向更积极，过大会振荡；减小更平滑但可能跟不上弯道。
+- `stopYawRateGain`：接近静止时原地对准方向的增益。若车辆停车转向慢可增大，若原地抖动则减小。
+- `maxYawRate`：角速度上限。应符合底盘能力和安全要求；过小会导致弯道跟不上，过大可能造成急转。
+- `dirDiffThre`：允许加速的方向误差阈值。误差超过它时控制器减速，单位为弧度；launch 中 `3.14` 基本等于允许较大误差，若希望转弯更稳可减小。
+
+**速度和路径末端**
+
+- `maxSpeed`：速度归一化基准，同时影响 `/speed` 和 `autonomySpeed` 转换。实际底盘最大速度和 localPlanner 的 `maxSpeed` 应保持一致。
+- `maxAccel`：速度变化率上限。增大响应快但容易打滑或冲过障碍，减小更平顺但加减速距离变长。
+- `slowDwnDisThre`：距离终点小于该值时开始按比例降速。增大更早减速，适合高速或重型底盘；过小可能来不及停车。
+- `stopDisThre`：到达路径末端的停车距离。过小可能在目标附近来回修正，过大则提前停下。
+- `pubSkipNum`：控制计算仍按 100 Hz 运行，但发布 `/cmd_vel` 的频率会降低；底盘需要高频命令时不要设置过大。
+
+**方向切换和人工/自主模式**
+
+- `twoWayDrive`：是否允许倒车。必须与 localPlanner 的 `twoWayDrive`、`noPathReverse` 以及真实底盘负速度能力一致。
+- `switchTimeThre`：前进/倒车方向切换的最短间隔。增大可防止振荡，减小可提高方向切换响应。
+- `noRotAtStop`：手动零速时是否禁止原地转向。开启更安全；需要手动调头时关闭。
+- `noRotAtGoal`：到达目标时是否禁止继续转向。开启可避免目标点附近原地旋转。
+- `autonomyMode`、`autonomySpeed`：启动时的自主模式和目标速度。`/joy` 可以切换人工/自主，`/speed` 只有在手柄一段时间未操作且处于自主模式时才会接管速度。
+- `joyToSpeedDelay`：手柄停止操作后，自主速度命令可以生效前的等待时间。增大更防止模式抢占，减小更快恢复自主控制。
+
+**坡度和安全保护**
+
+- `useInclRateToSlow`、`inclRateThre`：开启后，姿态角速度超过阈值会触发一段时间的降速。阈值单位为度/秒，必须结合 `/state_estimation.twist.twist.angular.x/y` 的实际含义检查。
+- `slowRate1`、`slowRate2`、`slowTime1`、`slowTime2`：坡度变化事件后的两阶段速度比例和持续时间。第一阶段应更保守，第二阶段用于平滑恢复。
+- `useInclToStop`、`inclThre`、`stopTime`：姿态绝对 roll/pitch 超过阈值时停车一段时间。阈值过低会误停，过高会失去保护。
+- `/stop`：外部最高优先级安全覆盖。值 1 停止平移，值 2 同时停止旋转；测试真实底盘时应确认命令超时也会归零。
+
+#### 当前 pathFollower 默认值解读
+
+当前 launch 中：
+
+- `lookAheadDis=0.5`、`yawRateGain=7.5`、`maxYawRate=90`：响应较积极，适合低速仿真；真实底盘若方向抖动，优先降低增益或增大前视距离。
+- `maxSpeed=0.2`、`autonomySpeed=0.5`：自主速度最终会被 `maxSpeed` 限制；应注意 `autonomySpeed` 大于 `maxSpeed` 时会被归一化为 1。
+- `maxAccel=2.5`：100 Hz 下速度变化很快，低速仿真通常可接受；实车应根据轮胎、地面和制动距离重新评估。
+- `slowDwnDisThre=0.85`、`stopDisThre=0.2`：接近路径终点会较早减速，并在 0.2 m 范围内停止。
+- `useInclRateToSlow=false`、`useInclToStop=false`：默认关闭坡度保护，实机上应先确认里程计角度和角速度含义，再决定是否启用。
+- `noRotAtStop=true`、`noRotAtGoal=true`：默认不在停车或到达目标后继续旋转，行为更保守。
+
+#### 推荐调参流程和典型现象
+
+1. 先低速验证坐标和路径参考系：检查 `/path.header.frame_id`、车辆移动方向、`sensorOffsetX/Y` 和 `rosrun tf tf_echo map vehicle`。
+2. 调 `lookAheadDis` 和 `yawRateGain`：先让直线不摆动，再逐步提高弯道跟踪能力。
+3. 调 `maxSpeed`、`maxAccel`、`slowDwnDisThre`：以实际制动距离为准，不要只看仿真中是否到达目标。
+4. 再测试手动/自主切换、前进/倒车和 `/stop`，确保控制权切换不会产生速度突变。
+5. 最后启用坡度减速/停车和更严格的角速度上限，并在可急停环境验证。
+
+| 现象 | 优先检查和调整 |
+| --- | --- |
+| 直线行驶左右摆动 | 增大 `lookAheadDis` 或减小 `yawRateGain`，同时检查 odom yaw 是否跳变。 |
+| 转弯切入太晚 | 减小 `lookAheadDis` 或适当增大 `yawRateGain`；确认 `maxYawRate` 没有限制过严。 |
+| 车辆转弯时速度过快 | 减小 `dirDiffThre`，让方向未对齐时更早减速；也可降低 `maxAccel`。 |
+| 到目标后仍旋转 | 确认 `noRotAtGoal=true`，并检查 `/path` 是否正确发布了单点或末端点。 |
+| 停车时手柄仍能让车旋转 | 检查 `noRotAtStop` 和 `safetyStop`，值为 2 的 `/stop` 才会清零角速度。 |
+| 前进/倒车来回切换 | 增大 `switchTimeThre`，检查路径方向标记和两端节点的 `twoWayDrive` 是否一致。 |
+| 自主速度不生效 | 检查 `autonomyMode`、`joyToSpeedDelay`、`joySpeedRaw`，手柄仍有输入时 `/speed` 不会接管。 |
+| 速度变化过猛或刹不住 | 降低 `maxAccel`，增大 `slowDwnDisThre`，并核对 `maxSpeed` 与底盘真实速度单位。 |
+| 上坡/颠簸没有减速或停车 | 确认 `/state_estimation` 的 roll/pitch 和 angular.x/y 正确，再开启对应坡度参数。 |
+
+最终验证顺序应是：`/path` 形状正确 -> 车辆参考系转换正确 -> `/cmd_vel` 方向和单位正确 -> 安全覆盖有效。只有前三者都成立后，才适合接入真实底盘。
 
 ### 7.5 扩展地形与统计
 
