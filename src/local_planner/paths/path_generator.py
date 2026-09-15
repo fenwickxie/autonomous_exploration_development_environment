@@ -50,7 +50,11 @@ def write_ply(filename, data, props):
 def main():
     # %% generate path
     dis = 1.0
-    angle = 27.0
+    # Ackermann 底盘：angle 已从原始 27.0 收窄为 7.0，使候选路径的最小曲率半径
+    # (~1.3 m，见 docs/PROJECT_GUIDE_ZH.md 的 Ackermann 章节) 不小于底盘最小转弯
+    # 半径 R_min=L/tan(delta_max)。dis 保持 1.0 不变，因为碰撞网格 gridVoxelOffsetX
+    # 在 localPlanner.cpp 中硬编码为 3.2 m，路径总长 3*dis 不能超过该范围。
+    angle = 7.0
     delta_angle = angle / 3.0
     scale = 0.65
 
