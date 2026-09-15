@@ -466,10 +466,10 @@ vehicleZ = /state_estimation.pose.pose.position.z
 
 当前 launch 中：
 
-- `lookAheadDis=0.5`、`yawRateGain=7.5`、`maxYawRate=90`：响应较积极，适合低速仿真；真实底盘若方向抖动，优先降低增益或增大前视距离。
-- `maxSpeed=0.2`、`autonomySpeed=0.5`：自主速度最终会被 `maxSpeed` 限制；应注意 `autonomySpeed` 大于 `maxSpeed` 时会被归一化为 1。
+- `lookAheadDis=0.5`、`yawRateGain=7.5`、`maxYawRate=42`：`maxYawRate` 已按 Ackermann 转向几何换算（见下文"Ackermann 转向底盘的偏航参数换算"），不是任意设定的响应速度。
+- `maxSpeed=1.0`、`autonomySpeed=0.5`：自主速度最终会被 `maxSpeed` 限制；应注意 `autonomySpeed` 大于 `maxSpeed` 时会被归一化为 1。
 - `maxAccel=2.5`：100 Hz 下速度变化很快，低速仿真通常可接受；实车应根据轮胎、地面和制动距离重新评估。
-- `slowDwnDisThre=0.85`、`stopDisThre=0.2`：接近路径终点会较早减速，并在 0.2 m 范围内停止。
+- `slowDwnDisThre=1.0`、`stopDisThre=0.2`：接近路径终点会较早减速，并在 0.2 m 范围内停止。
 - `useInclRateToSlow=false`、`useInclToStop=false`：默认关闭坡度保护，实机上应先确认里程计角度和角速度含义，再决定是否启用。
 - `noRotAtStop=true`、`noRotAtGoal=true`：默认不在停车或到达目标后继续旋转，行为更保守。
 
@@ -494,6 +494,32 @@ vehicleZ = /state_estimation.pose.pose.position.z
 | 上坡/颠簸没有减速或停车 | 确认 `/state_estimation` 的 roll/pitch 和 angular.x/y 正确，再开启对应坡度参数。 |
 
 最终验证顺序应是：`/path` 形状正确 -> 车辆参考系转换正确 -> `/cmd_vel` 方向和单位正确 -> 安全覆盖有效。只有前三者都成立后，才适合接入真实底盘。
+
+#### Ackermann 转向底盘的偏航参数换算
+
+`pathFollower` 的 `yawRateGain`/`stopYawRateGain`/`maxYawRate` 默认假设差速/全向底盘：车辆在任意速度（包括 $v=0$）都能达到任意偏航角速度。Ackermann 底盘不满足这个假设——偏航角速度与线速度通过转向角和轴距耦合：
+
+$$\omega = \frac{v \cdot \tan(\delta)}{L}$$
+
+其中 $L$ 为轴距，$\delta$ 为前轮转向角，$\delta_{max}$ 为机械最大转向角。由上式可知 $v=0$ 时 $\omega=0$，Ackermann 底盘物理上无法原地转向。
+
+**`maxYawRate` 的计算**：取车辆最大速度 $v_{max}$（即 launch 中的 `maxSpeed`）下、转向打满时能达到的偏航角速度，作为绝不应超过的硬上限：
+
+$$\omega_{max} = \frac{v_{max}\cdot\tan(\delta_{max})}{L}$$
+
+例如轴距 $L=0.55\,\text{m}$、$\delta_{max}=0.45\,\text{rad}$、`maxSpeed=1.0 m/s` 时：
+
+$$\omega_{max} = \frac{1.0\times\tan(0.45)}{0.55}\approx 0.878\ \text{rad/s}\approx 50.3°/\text{s}$$
+
+实际填入 `maxYawRate` 时应再乘以安全系数（建议 0.85~0.9），避免频繁打到转向机械死点；本项目当前配置取 `45.0°/s`。
+
+**`yawRateGain`/`stopYawRateGain` 的建议**：Ackermann 底盘无法在静止或低速时快速对准方向，因此 `stopYawRateGain` 不应像差速底盘那样调大做“原地快速纠偏”，建议与 `yawRateGain` 取相近或更小的值。真正的可行性约束不应该只压在这两个增益上。
+
+**必须配套的下游节点**：车速会低于 `maxSpeed`（例如巡航速度 `autonomySpeed`），仅用 `maxYawRate` 这一个常量无法保证任意时刻的角速度请求都物理可行。必须在 `/cmd_vel` 到 Ackermann 底盘协议之间增加一个转换节点，实时按当前线速度把请求的角速度换算成转向角并限幅：
+
+$$\delta = \operatorname{atan2}(\omega \cdot L,\ v),\qquad \delta \in [-\delta_{max}, \delta_{max}]$$
+
+这个转换节点才是真正保证任意速度下转向可行性的地方；`pathFollower` 的三个偏航参数只需保证在最高速度下的请求是合理的。
 
 ### 7.5 扩展地形与统计
 
