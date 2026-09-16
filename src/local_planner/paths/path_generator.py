@@ -49,12 +49,9 @@ def write_ply(filename, data, props):
 
 def main():
     # %% generate path
-    dis = 1.0
-    # Ackermann 底盘：angle 已从原始 27.0 收窄为 7.0，使候选路径的最小曲率半径
-    # (~1.3 m，见 docs/PROJECT_GUIDE_ZH.md 的 Ackermann 章节) 不小于底盘最小转弯
-    # 半径 R_min=L/tan(delta_max)。dis 保持 1.0 不变，因为碰撞网格 gridVoxelOffsetX
-    # 在 localPlanner.cpp 中硬编码为 3.2 m，路径总长 3*dis 不能超过该范围。
-    angle = 7.0
+    dis = 2.0
+    # 增加路径距离后，Ackermann 底盘使用 11 度转弯幅度，路径总弧长为 3*dis=6 m。
+    angle = 11.0
     delta_angle = angle / 3.0
     scale = 0.65
 
@@ -161,9 +158,9 @@ def main():
     # %% find correspondence
     voxel_size = 0.02
     search_radius = 0.55
-    offset_x = 3.2
+    offset_x = 6.2
     offset_y = 4.5
-    voxel_num_x = 161
+    voxel_num_x = 311
     voxel_num_y = 451
 
     print("\nPreparing voxels")
@@ -193,21 +190,20 @@ def main():
     with open("correspondences.txt", "w") as f:
         for chunk_start in range(0, voxel_point_num, chunk_size):
             chunk_end = min(chunk_start + chunk_size, voxel_point_num)
-            chunk_matches = tree.query_ball_point(voxel_points[chunk_start:chunk_end], search_radius)
+            chunk_matches = tree.query_ball_point(
+                voxel_points[chunk_start:chunk_end],
+                search_radius,
+                return_sorted=False,
+                workers=-1,
+            )
 
             for local_idx, matches in enumerate(chunk_matches):
                 i = chunk_start + local_idx
                 f.write(f"{i} ")
 
                 if len(matches) > 0:
-                    sorted_matches = np.sort(matches)
-                    path_ind_rec = -1
-                    for j in sorted_matches:
-                        path_ind = int(path_ids[j])
-                        if path_ind == path_ind_rec:
-                            continue
+                    for path_ind in np.unique(path_ids[matches]):
                         f.write(f"{path_ind} ")
-                        path_ind_rec = path_ind
                 f.write("-1\n")
 
                 if (i + 1) % 1000 == 0:

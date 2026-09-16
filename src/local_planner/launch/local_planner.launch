@@ -13,7 +13,7 @@
   <arg name="vehicleWidth" default="0.6"/>
   <arg name="searchRadius" default="0.55"/>
   <arg name="gridVoxelSize" default="0.02"/>
-  <arg name="gridVoxelOffsetX" default="3.2"/>
+  <arg name="gridVoxelOffsetX" default="6.2"/>
   <arg name="gridVoxelOffsetY" default="4.5"/>
   <arg name="joyToSpeedDelay" default="2.0"/>
   <arg name="goalX" default="0"/>
