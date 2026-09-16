@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ros/ros.h>
+#include <dynamic_reconfigure/server.h>
+#include <vehicle_simulator/VehicleSimulatorConfig.h>
 
 #include <message_filters/subscriber.h>
 #include <message_filters/synchronizer.h>
@@ -97,6 +99,21 @@ int odomRecIDPointer = 0; // 里程计接收指针
 pcl::VoxelGrid<pcl::PointXYZI> terrainDwzFilter; // 地形下采样滤波器
 
 ros::Publisher* pubScanPointer = NULL; // 扫描数据发布器指针
+
+void reconfigureCallback(vehicle_simulator::VehicleSimulatorConfig &config, uint32_t)
+{
+  use_gazebo_time = config.use_gazebo_time;
+  cameraOffsetZ = config.cameraOffsetZ;
+  vehicleHeight = config.vehicleHeight;
+  terrainZ = config.terrainZ;
+  vehicleYaw = config.vehicleYaw;
+  adjustZ = config.adjustZ;
+  adjustIncl = config.adjustIncl;
+  groundHeightThre = config.groundHeightThre;
+  terrainRadiusZ = config.terrainRadiusZ;
+  terrainRadiusIncl = config.terrainRadiusIncl;
+  maxIncl = config.maxIncl;
+}
 
 /**
  * 处理输入的点云消息，更新车辆和地形的状态信息。
@@ -358,6 +375,10 @@ int main(int argc, char** argv)
   nhPrivate.getParam("minTerrainPointNumIncl", minTerrainPointNumIncl); // 获取地形倾角拟合的最小点数
   nhPrivate.getParam("InclFittingThre", InclFittingThre); // 获取倾角拟合的阈值
   nhPrivate.getParam("maxIncl", maxIncl); // 获取车辆的最大倾角
+
+  dynamic_reconfigure::Server<vehicle_simulator::VehicleSimulatorConfig> server;
+  dynamic_reconfigure::Server<vehicle_simulator::VehicleSimulatorConfig>::CallbackType callback = reconfigureCallback;
+  server.setCallback(callback);
 
   ros::Subscriber subScan = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_points", 2, scanHandler);
 

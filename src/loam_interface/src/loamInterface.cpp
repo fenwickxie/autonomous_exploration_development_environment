@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ros/ros.h>
+#include <dynamic_reconfigure/server.h>
+#include <loam_interface/LoamInterfaceConfig.h>
 
 #include <message_filters/subscriber.h>
 #include <message_filters/synchronizer.h>
@@ -45,6 +47,14 @@ tf::StampedTransform odomTrans;
 ros::Publisher *pubOdometryPointer = NULL;
 tf::TransformBroadcaster *tfBroadcasterPointer = NULL;
 ros::Publisher *pubLaserCloudPointer = NULL;
+
+void reconfigureCallback(loam_interface::LoamInterfaceConfig &config, uint32_t)
+{
+  flipStateEstimation = config.flipStateEstimation;
+  flipRegisteredScan = config.flipRegisteredScan;
+  sendTF = config.sendTF;
+  reverseTF = config.reverseTF;
+}
 
 void odometryHandler(const nav_msgs::Odometry::ConstPtr& odom)
 {
@@ -148,6 +158,10 @@ int main(int argc, char** argv)
   nhPrivate.getParam("flipRegisteredScan", flipRegisteredScan);
   nhPrivate.getParam("sendTF", sendTF);
   nhPrivate.getParam("reverseTF", reverseTF);
+
+  dynamic_reconfigure::Server<loam_interface::LoamInterfaceConfig> server;
+  dynamic_reconfigure::Server<loam_interface::LoamInterfaceConfig>::CallbackType callback = reconfigureCallback;
+  server.setCallback(callback);
 
   // 订阅外部数据；输出使用导航栈固定的绝对话题名，所以下游无需针对某个 SLAM 重映射。
   ros::Subscriber subOdometry = nh.subscribe<nav_msgs::Odometry> (stateEstimationTopic, 5, odometryHandler);

@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ros/ros.h>
+#include <dynamic_reconfigure/server.h>
+#include <local_planner/LocalPlannerConfig.h>
 
 #include <message_filters/subscriber.h>
 #include <message_filters/synchronizer.h>
@@ -127,6 +129,33 @@ float vehicleRoll = 0, vehiclePitch = 0, vehicleYaw = 0;
 float vehicleX = 0, vehicleY = 0, vehicleZ = 0;
 
 pcl::VoxelGrid<pcl::PointXYZI> laserDwzFilter, terrainDwzFilter;
+
+void reconfigureCallback(local_planner::LocalPlannerConfig &config, uint32_t)
+{
+  twoWayDrive = config.twoWayDrive;
+  checkObstacle = config.checkObstacle;
+  checkRotObstacle = config.checkRotObstacle;
+  useCost = config.useCost;
+  autonomyMode = config.autonomyMode;
+  maxSpeed = config.maxSpeed;
+  autonomySpeed = config.autonomySpeed;
+  adjacentRange = config.adjacentRange;
+  obstacleHeightThre = config.obstacleHeightThre;
+  groundHeightThre = config.groundHeightThre;
+  costHeightThre = config.costHeightThre;
+  costScore = config.costScore;
+  pointPerPathThre = config.pointPerPathThre;
+  dirWeight = config.dirWeight;
+  dirThre = config.dirThre;
+  pathScale = config.pathScale;
+  minPathScale = config.minPathScale;
+  pathScaleStep = config.pathScaleStep;
+  pathRangeBySpeed = config.pathRangeBySpeed;
+  minPathRange = config.minPathRange;
+  pathRangeStep = config.pathRangeStep;
+  pathCropByGoal = config.pathCropByGoal;
+  goalClearRange = config.goalClearRange;
+}
 
 void odometryHandler(const nav_msgs::Odometry::ConstPtr& odom)
 {
@@ -560,6 +589,10 @@ int main(int argc, char** argv)
   nhPrivate.getParam("goalClearRange", goalClearRange);
   nhPrivate.getParam("goalX", goalX);
   nhPrivate.getParam("goalY", goalY);
+
+  dynamic_reconfigure::Server<local_planner::LocalPlannerConfig> server;
+  dynamic_reconfigure::Server<local_planner::LocalPlannerConfig>::CallbackType callback = reconfigureCallback;
+  server.setCallback(callback);
 
   ros::Subscriber subOdometry = nh.subscribe<nav_msgs::Odometry>
                                 ("/state_estimation", 5, odometryHandler);

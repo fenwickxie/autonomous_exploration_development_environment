@@ -11,8 +11,11 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   std_msgs
   sensor_msgs
+  dynamic_reconfigure
   pcl_ros
 )
+
+generate_dynamic_reconfigure_options(cfg/LoamInterface.cfg)
 
 find_package(PCL REQUIRED)
 
@@ -25,6 +28,7 @@ catkin_package(
   roscpp
   std_msgs
   sensor_msgs
+  dynamic_reconfigure
   pcl_ros
 )
 
@@ -62,4 +66,7 @@ install(TARGETS loamInterface
 
 install(DIRECTORY launch/
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
+)
+install(DIRECTORY cfg/
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/cfg
 )

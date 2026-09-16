@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ros/ros.h>
+#include <dynamic_reconfigure/server.h>
+#include <local_planner/PathFollowerConfig.h>
 
 #include <message_filters/subscriber.h>
 #include <message_filters/synchronizer.h>
@@ -94,6 +96,34 @@ bool navFwd = true;
 double switchTime = 0;
 
 nav_msgs::Path path;
+
+void reconfigureCallback(local_planner::PathFollowerConfig &config, uint32_t)
+{
+  twoWayDrive = config.twoWayDrive;
+  autonomyMode = config.autonomyMode;
+  autonomySpeed = config.autonomySpeed;
+  lookAheadDis = config.lookAheadDis;
+  yawRateGain = config.yawRateGain;
+  stopYawRateGain = config.stopYawRateGain;
+  maxYawRate = config.maxYawRate;
+  maxSpeed = config.maxSpeed;
+  maxAccel = config.maxAccel;
+  switchTimeThre = config.switchTimeThre;
+  dirDiffThre = config.dirDiffThre;
+  stopDisThre = config.stopDisThre;
+  slowDwnDisThre = config.slowDwnDisThre;
+  noRotAtStop = config.noRotAtStop;
+  noRotAtGoal = config.noRotAtGoal;
+  useInclRateToSlow = config.useInclRateToSlow;
+  inclRateThre = config.inclRateThre;
+  slowRate1 = config.slowRate1;
+  slowRate2 = config.slowRate2;
+  slowTime1 = config.slowTime1;
+  slowTime2 = config.slowTime2;
+  useInclToStop = config.useInclToStop;
+  inclThre = config.inclThre;
+  stopTime = config.stopTime;
+}
 
 void odomHandler(const nav_msgs::Odometry::ConstPtr& odomIn)
 {
@@ -224,6 +254,10 @@ int main(int argc, char** argv)
   nhPrivate.getParam("autonomyMode", autonomyMode);
   nhPrivate.getParam("autonomySpeed", autonomySpeed);
   nhPrivate.getParam("joyToSpeedDelay", joyToSpeedDelay);
+
+  dynamic_reconfigure::Server<local_planner::PathFollowerConfig> server;
+  dynamic_reconfigure::Server<local_planner::PathFollowerConfig>::CallbackType callback = reconfigureCallback;
+  server.setCallback(callback);
 
   ros::Subscriber subOdom = nh.subscribe<nav_msgs::Odometry> ("/state_estimation", 5, odomHandler);
 

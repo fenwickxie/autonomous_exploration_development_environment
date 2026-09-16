@@ -131,6 +131,31 @@ roslaunch vehicle_simulator system_real_robot.launch use_joystick:=true
 
 启动前须确保外部系统正在发布 `/odin1/odometry` 和 `/odin1/cloud_slam`。默认参数见 `loam_interface/launch/loam_interface.launch`；若外部话题或坐标约定不同，应修改该处参数而非下游规划代码。
 
+### 5.5 在线调参
+
+项目已为主要运行节点接入 ROS1 `dynamic_reconfigure`，启动系统并加载工作区后执行：
+
+```bash
+source devel/setup.bash
+rosrun rqt_reconfigure rqt_reconfigure
+```
+
+可在线调节的节点和配置文件如下：
+
+| 节点 | 配置文件 | 适合在线调节的内容 |
+| --- | --- | --- |
+| `loamInterface` | `loam_interface/cfg/LoamInterface.cfg` | 坐标轴翻转、TF 发布方向 |
+| `localPlanner` | `local_planner/cfg/LocalPlanner.cfg` | 障碍阈值、规划范围、路径尺度、目标代价和自主速度 |
+| `pathFollower` | `local_planner/cfg/PathFollower.cfg` | 前视距离、转向增益、速度、加速度、减速和安全保护 |
+| `terrainAnalysis` | `terrain_analysis/cfg/TerrainAnalysis.cfg` | 地面估计、点云衰减、动态障碍和未知区域阈值 |
+| `terrainAnalysisExt` | `terrain_analysis_ext/cfg/TerrainAnalysisExt.cfg` | 扩展地图衰减、地形连通性和顶棚过滤 |
+| `vehicleSimulator` | `vehicle_simulator/cfg/VehicleSimulator.cfg` | 仿真地形跟随、车辆高度、初始偏航和时间对齐 |
+| `visualizationTools` | `visualization_tools/cfg/VisualizationTools.cfg` | 统计采样和可视化体素大小 |
+
+话题名、路径库文件夹、路径网格尺寸、候选路径数量、传感器安装偏移和文件路径仍属于启动期契约，未开放为在线参数。修改这些内容需要重新启动节点；尤其不要在线修改 `gridVoxelSize`、`gridVoxelOffsetX/Y` 或 `pathFolder`，否则会造成路径倒排表和运行时索引不一致。
+
+在线调参建议：先低速运行，修改一个参数后观察 `/terrain_map`、`/free_paths`、`/path` 和 `/cmd_vel`，确认效果后记录参数。`rqt_reconfigure` 修改的是节点当前运行参数，节点重启后仍以 launch 文件中的值为初始来源，因此最终确定的参数应同步回 launch 文件。
+
 ## 6. 核心接口契约
 
 ### 6.1 主数据话题

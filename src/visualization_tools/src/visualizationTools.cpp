@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ros/ros.h>
+#include <dynamic_reconfigure/server.h>
+#include <visualization_tools/VisualizationToolsConfig.h>
 
 #include <message_filters/subscriber.h>
 #include <message_filters/synchronizer.h>
@@ -77,6 +79,20 @@ ros::Publisher *pubTimeDurationPtr = NULL;
 
 FILE *metricFilePtr = NULL;
 FILE *trajFilePtr = NULL;
+
+void reconfigureCallback(visualization_tools::VisualizationToolsConfig &config, uint32_t)
+{
+  overallMapVoxelSize = config.overallMapVoxelSize;
+  exploredAreaVoxelSize = config.exploredAreaVoxelSize;
+  exploredVolumeVoxelSize = config.exploredVolumeVoxelSize;
+  transInterval = config.transInterval;
+  yawInterval = config.yawInterval;
+  overallMapDisplayInterval = config.overallMapDisplayInterval;
+  exploredAreaDisplayInterval = config.exploredAreaDisplayInterval;
+  overallMapDwzFilter.setLeafSize(overallMapVoxelSize, overallMapVoxelSize, overallMapVoxelSize);
+  exploredAreaDwzFilter.setLeafSize(exploredAreaVoxelSize, exploredAreaVoxelSize, exploredAreaVoxelSize);
+  exploredVolumeDwzFilter.setLeafSize(exploredVolumeVoxelSize, exploredVolumeVoxelSize, exploredVolumeVoxelSize);
+}
 
 void odometryHandler(const nav_msgs::Odometry::ConstPtr& odom)
 {
@@ -230,6 +246,10 @@ int main(int argc, char** argv)
   nhPrivate.getParam("yawInterval", yawInterval);
   nhPrivate.getParam("overallMapDisplayInterval", overallMapDisplayInterval);
   nhPrivate.getParam("exploredAreaDisplayInterval", exploredAreaDisplayInterval);
+
+  dynamic_reconfigure::Server<visualization_tools::VisualizationToolsConfig> server;
+  dynamic_reconfigure::Server<visualization_tools::VisualizationToolsConfig>::CallbackType callback = reconfigureCallback;
+  server.setCallback(callback);
 
   ros::Subscriber subOdometry = nh.subscribe<nav_msgs::Odometry> ("/state_estimation", 5, odometryHandler);
 

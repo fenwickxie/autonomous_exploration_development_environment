@@ -1,5 +1,7 @@
 #include <math.h>
 #include <ros/ros.h>
+#include <dynamic_reconfigure/server.h>
+#include <terrain_analysis/TerrainAnalysisConfig.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -104,6 +106,34 @@ float sinVehiclePitch = 0, cosVehiclePitch = 0;
 float sinVehicleYaw = 0, cosVehicleYaw = 0;
 
 pcl::VoxelGrid<pcl::PointXYZI> downSizeFilter;
+
+void reconfigureCallback(terrain_analysis::TerrainAnalysisConfig &config, uint32_t)
+{
+  decayTime = config.decayTime;
+  noDecayDis = config.noDecayDis;
+  clearingDis = config.clearingDis;
+  useSorting = config.useSorting;
+  quantileZ = config.quantileZ;
+  considerDrop = config.considerDrop;
+  limitGroundLift = config.limitGroundLift;
+  maxGroundLift = config.maxGroundLift;
+  clearDyObs = config.clearDyObs;
+  minDyObsDis = config.minDyObsDis;
+  minDyObsAngle = config.minDyObsAngle;
+  minDyObsRelZ = config.minDyObsRelZ;
+  absDyObsRelZThre = config.absDyObsRelZThre;
+  minDyObsVFOV = config.minDyObsVFOV;
+  maxDyObsVFOV = config.maxDyObsVFOV;
+  minDyObsPointNum = config.minDyObsPointNum;
+  noDataObstacle = config.noDataObstacle;
+  noDataBlockSkipNum = config.noDataBlockSkipNum;
+  minBlockPointNum = config.minBlockPointNum;
+  minRelZ = config.minRelZ;
+  maxRelZ = config.maxRelZ;
+  disRatioZ = config.disRatioZ;
+  voxelPointUpdateThre = config.voxelPointUpdateThre;
+  voxelTimeUpdateThre = config.voxelTimeUpdateThre;
+}
 
 // 状态估计回调函数
 void odometryHandler(const nav_msgs::Odometry::ConstPtr &odom) {
@@ -227,6 +257,10 @@ int main(int argc, char **argv) {
   nhPrivate.getParam("minRelZ", minRelZ);
   nhPrivate.getParam("maxRelZ", maxRelZ);
   nhPrivate.getParam("disRatioZ", disRatioZ);
+
+  dynamic_reconfigure::Server<terrain_analysis::TerrainAnalysisConfig> server;
+  dynamic_reconfigure::Server<terrain_analysis::TerrainAnalysisConfig>::CallbackType callback = reconfigureCallback;
+  server.setCallback(callback);
 
   ros::Subscriber subOdometry =
       nh.subscribe<nav_msgs::Odometry>("/state_estimation", 5, odometryHandler);
