@@ -89,9 +89,9 @@ const int pathNum = 343;
 const int groupNum = 7;
 float gridVoxelSize = 0.02;
 float searchRadius = 0.55;
-float gridVoxelOffsetX = 6.2;
+float gridVoxelOffsetX = 5.0;
 float gridVoxelOffsetY = 4.5;
-const int gridVoxelNumX = 311;
+const int gridVoxelNumX = 251;
 const int gridVoxelNumY = 451;
 const int gridVoxelNum = gridVoxelNumX * gridVoxelNumY;
 
