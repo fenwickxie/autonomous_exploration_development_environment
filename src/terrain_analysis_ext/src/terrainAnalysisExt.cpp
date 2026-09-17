@@ -1,5 +1,7 @@
 #include <math.h>
 #include <ros/ros.h>
+#include <dynamic_reconfigure/server.h>
+#include <terrain_analysis_ext/TerrainAnalysisExtConfig.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -88,6 +90,25 @@ float vehicleX = 0, vehicleY = 0, vehicleZ = 0;
 
 pcl::VoxelGrid<pcl::PointXYZI> downSizeFilter;
 pcl::KdTreeFLANN<pcl::PointXYZI> kdtree;
+
+void reconfigureCallback(terrain_analysis_ext::TerrainAnalysisExtConfig &config, uint32_t)
+{
+  decayTime = config.decayTime;
+  noDecayDis = config.noDecayDis;
+  clearingDis = config.clearingDis;
+  useSorting = config.useSorting;
+  quantileZ = config.quantileZ;
+  lowerBoundZ = config.lowerBoundZ;
+  upperBoundZ = config.upperBoundZ;
+  disRatioZ = config.disRatioZ;
+  checkTerrainConn = config.checkTerrainConn;
+  terrainUnderVehicle = config.terrainUnderVehicle;
+  terrainConnThre = config.terrainConnThre;
+  ceilingFilteringThre = config.ceilingFilteringThre;
+  localTerrainMapRadius = config.localTerrainMapRadius;
+  voxelPointUpdateThre = config.voxelPointUpdateThre;
+  voxelTimeUpdateThre = config.voxelTimeUpdateThre;
+}
 
 // 状态估计回调函数
 void odometryHandler(const nav_msgs::Odometry::ConstPtr& odom)
@@ -192,6 +213,10 @@ int main(int argc, char** argv)
   nhPrivate.getParam("terrainConnThre", terrainConnThre);
   nhPrivate.getParam("ceilingFilteringThre", ceilingFilteringThre);
   nhPrivate.getParam("localTerrainMapRadius", localTerrainMapRadius);
+
+  dynamic_reconfigure::Server<terrain_analysis_ext::TerrainAnalysisExtConfig> server;
+  dynamic_reconfigure::Server<terrain_analysis_ext::TerrainAnalysisExtConfig>::CallbackType callback = reconfigureCallback;
+  server.setCallback(callback);
 
   ros::Subscriber subOdometry = nh.subscribe<nav_msgs::Odometry>("/state_estimation", 5, odometryHandler);
 

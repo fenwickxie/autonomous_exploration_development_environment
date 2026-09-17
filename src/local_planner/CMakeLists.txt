@@ -11,7 +11,13 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   std_msgs
   sensor_msgs
+  dynamic_reconfigure
   pcl_ros
+)
+
+generate_dynamic_reconfigure_options(
+  cfg/LocalPlanner.cfg
+  cfg/PathFollower.cfg
 )
 
 find_package(PCL REQUIRED)
@@ -25,6 +31,7 @@ catkin_package(
   roscpp
   std_msgs
   sensor_msgs
+  dynamic_reconfigure
   pcl_ros
 )
 
@@ -64,6 +71,9 @@ install(TARGETS localPlanner pathFollower
 
 install(DIRECTORY launch/
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
+)
+install(DIRECTORY cfg/
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/cfg
 )
 install(DIRECTORY paths/
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/paths

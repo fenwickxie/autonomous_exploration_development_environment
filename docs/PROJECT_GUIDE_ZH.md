@@ -131,6 +131,31 @@ roslaunch vehicle_simulator system_real_robot.launch use_joystick:=true
 
 启动前须确保外部系统正在发布 `/odin1/odometry` 和 `/odin1/cloud_slam`。默认参数见 `loam_interface/launch/loam_interface.launch`；若外部话题或坐标约定不同，应修改该处参数而非下游规划代码。
 
+### 5.5 在线调参
+
+项目已为主要运行节点接入 ROS1 `dynamic_reconfigure`，启动系统并加载工作区后执行：
+
+```bash
+source devel/setup.bash
+rosrun rqt_reconfigure rqt_reconfigure
+```
+
+可在线调节的节点和配置文件如下：
+
+| 节点 | 配置文件 | 适合在线调节的内容 |
+| --- | --- | --- |
+| `loamInterface` | `loam_interface/cfg/LoamInterface.cfg` | 坐标轴翻转、TF 发布方向 |
+| `localPlanner` | `local_planner/cfg/LocalPlanner.cfg` | 障碍阈值、规划范围、路径尺度、目标代价和自主速度 |
+| `pathFollower` | `local_planner/cfg/PathFollower.cfg` | 前视距离、转向增益、速度、加速度、减速和安全保护 |
+| `terrainAnalysis` | `terrain_analysis/cfg/TerrainAnalysis.cfg` | 地面估计、点云衰减、动态障碍和未知区域阈值 |
+| `terrainAnalysisExt` | `terrain_analysis_ext/cfg/TerrainAnalysisExt.cfg` | 扩展地图衰减、地形连通性和顶棚过滤 |
+| `vehicleSimulator` | `vehicle_simulator/cfg/VehicleSimulator.cfg` | 仿真地形跟随、车辆高度、初始偏航和时间对齐 |
+| `visualizationTools` | `visualization_tools/cfg/VisualizationTools.cfg` | 统计采样和可视化体素大小 |
+
+话题名、路径库文件夹、路径网格尺寸、候选路径数量、传感器安装偏移和文件路径仍属于启动期契约，未开放为在线参数。修改这些内容需要重新启动节点；尤其不要在线修改 `gridVoxelSize`、`gridVoxelOffsetX/Y` 或 `pathFolder`，否则会造成路径倒排表和运行时索引不一致。
+
+在线调参建议：先低速运行，修改一个参数后观察 `/terrain_map`、`/free_paths`、`/path` 和 `/cmd_vel`，确认效果后记录参数。`rqt_reconfigure` 修改的是节点当前运行参数，节点重启后仍以 launch 文件中的值为初始来源，因此最终确定的参数应同步回 launch 文件。
+
 ## 6. 核心接口契约
 
 ### 6.1 主数据话题
@@ -353,22 +378,22 @@ vehicleZ = /state_estimation.pose.pose.position.z
 
 这四个量共同定义了 `correspondences.txt` 那张"体素→受阻路径列表"倒排表的网格，是让在线规划避免逐路径逐点做几何碰撞检测的关键：
 
-- **网格覆盖的物理范围**：`gridVoxelOffsetX=3.2 m`、`gridVoxelOffsetY=4.5 m` 分别是网格在车辆前方 `x` 方向和左右 `y` 方向覆盖的范围半径（以车头为原点、路径生成坐标系而非世界坐标系）；`gridVoxelSize=0.02 m` 是网格分辨率；`gridVoxelNumX=161`、`gridVoxelNumY=451` 是对应方向上的格子数，三者满足 $\text{Num}=\text{Offset}/\text{Size}+1$（$3.2/0.02+1=161$，$4.5/0.02+1=451$），即"格子数、单格尺寸、覆盖范围"三者只有两个自由度，第三个由前两个决定，不能独立修改。`gridVoxelNumX/Y` 是 `localPlanner.cpp` 里的编译期 `const int`，而 `gridVoxelOffsetX/Y`、`gridVoxelSize` 是运行时可调的 ROS 参数——这意味着如果只在 launch 里改 `gridVoxelOffsetX` 而不改代码里的 `gridVoxelNumX` 并重新编译，网格范围和格子数就会互相对不上，索引会越界或错位。
-- **`x`/`y` 的非对称含义**：`gridVoxelOffsetX` 对应路径生成坐标系里的 `x`（沿路径前进方向，也就是 `path_generator.py` 里 `path_r` 累积到的最大值 `3*dis`），`gridVoxelOffsetY` 对应横向偏移。因为候选路径是从车头往前延伸的曲线，横向偏移范围需要比纵向覆盖得更宽（尤其是急转弯路径末端会甩到侧后方），所以 `offsetY=4.5 m` 明显大于 `offsetX=3.2 m`，这不是对称设计。
-- **网格不是笛卡尔矩形网格，而是随 `x` 展宽的扇形网格**：`localPlanner.cpp` 里 `scaleY = x2/gridVoxelOffsetX + searchRadius/gridVoxelOffsetY*(gridVoxelOffsetX - x2)/gridVoxelOffsetX`，`path_generator.py` 里对称地用 `scale_y = x/offset_x + search_radius/offset_y*(offset_x - x)/offset_x`；这个 `scaleY` 让越靠近车头（`x` 越接近 `gridVoxelOffsetX`，即路径起点附近）的地方，横向索引对应的实际横向距离越小、分辨率越高，而 `x` 越小（路径末端附近）时横向范围按比例放大到 `searchRadius`。这样设计是为了让车辆近处（碰撞后果最严重、需要精细判断障碍具体挡住哪几条路径）用更细的横向网格，而路径末端稀疏一些也足够，从而在固定 `gridVoxelNumY=451` 格子数下把分辨率预算优先分配给近处。
+- **网格覆盖的物理范围**：`gridVoxelOffsetX=6.2 m` 是从车辆参考点向前的单侧范围，$x\in[0,6.2]$；`gridVoxelOffsetY=4.5 m` 是横向半范围，$y\in[-4.5,4.5]$。`gridVoxelSize=0.02 m` 是分辨率，因此格子数必须分别满足 $N_x=6.2/0.02+1=311$ 与 $N_y=(2\times4.5)/0.02+1=451$。此前将 $4.5/0.02+1$ 误写为 451 是错误的：横向是双侧范围，必须乘 2。`gridVoxelNumX/Y` 是 `localPlanner.cpp` 的编译期常量，`gridVoxelOffsetX/Y`、`gridVoxelSize` 是启动参数；它们必须与生成器同时修改，不能独立改动。
+- **`x`/`y` 的非对称含义**：`gridVoxelOffsetX` 覆盖车辆前方的路径长度，必须大于候选路径最大的前向投影；`gridVoxelOffsetY` 覆盖左右两侧的路径和车辆扫掠空间。当前 `dis=2.0` 时路径总弧长为 $3\times dis=6.0\,\text{m}$、最大前向投影约为 6.0 m，因此选择 `offsetX=6.2 m` 留出 0.2 m 余量。新路径的最大横向偏移约为 1.50 m，原有 `offsetY=4.5 m` 已足够，不应改为 8.5 m。
+- **网格不是笛卡尔矩形网格，而是从近处向远处展开的扇形网格**：`scaleY = x/gridVoxelOffsetX + searchRadius/gridVoxelOffsetY*(gridVoxelOffsetX-x)/gridVoxelOffsetX`。当 $x=0$（车辆附近）时，`scaleY=searchRadius/offsetY`，横向覆盖约为 $\pm searchRadius=\pm0.55\,\text{m}$；当 $x=offsetX$（路径远端）时，`scaleY=1`，横向覆盖为完整的 $\pm4.5\,\text{m}$。这样把近车区域收紧到车辆扫掠宽度附近，而为远处绕障提供更宽横向范围。
 - **`correspondences.txt` 的生成方式**：`path_generator.py` 用 `cKDTree` 对全部 343 条曲线的采样点建索引，再对网格里每一个 `(x, y)` 格心坐标做 `query_ball_point(point, search_radius)` 查询，把半径 `search_radius=0.55 m` 内命中的路径 ID（去重后按顺序）写成该格子的一行。`localPlanner.cpp` 在线只需把障碍点变换、旋转、除以 `pathScale` 后算出 `(indX, indY)`，直接查这一行拿到"被这个障碍阻塞的路径列表"并计数，不需要对 343 条路径逐条做距离计算——这是本规划器"离线生成轨迹库，在线快速筛选"的核心加速手段。
 
-**这次改 `angle` 之后，这几个网格参数需不需要跟着改**
+**将 `dis` 从 1.0 m 加长为 2.0 m 后，网格参数必须成套调整**
 
 不需要。原因：
 
-- 本次只改了 `path_generator.py` 里的 `angle`（曲线转弯幅度），没有改 `dis`（`1.0 m` 不变），路径总长仍是 $3\times dis=3.0\,\text{m}$，小于 `gridVoxelOffsetX=3.2 m`，路径末端仍完全落在碰撞网格覆盖范围内，不会出现"路径超出网格、末端障碍检测失效"的问题。
-- `gridVoxelSize`、`searchRadius`、`gridVoxelOffsetX/Y` 这四个参数描述的是"网格分辨率和覆盖范围"，只和路径的**空间跨度**（由 `dis` 决定）与**碰撞检测的几何精度**有关，与路径**转弯角度**（`angle`）无关；`angle` 变化只会改变落在同一网格范围内的路径形状更直或更弯，不改变路径跨度，因此网格契约不受影响。
-- `path_generator.py` 里重新生成 `correspondences.txt` 时用的仍是同一份 `voxel_size=0.02`、`search_radius=0.55`、`offset_x=3.2`、`offset_y=4.5`、`voxel_num_x=161`、`voxel_num_y=451`，与 `localPlanner.cpp` 里的硬编码常量逐项相同，因此本次重新生成后倒排表和在线索引仍然自洽，不需要同步修改 `localPlanner.cpp` 或重新编译。
+- `dis` 是每段路径长度，三段路径的总弧长从 $3\times1=3\,\text{m}$ 变为 $3\times2=6\,\text{m}$。这会让规划器的单次输出路径更长、提前量更大，但障碍物的有效碰撞检查范围也必须覆盖到新的路径末端。
+- 保持 `gridVoxelSize=0.02 m` 时，前向范围从 `3.2 m` 增至 `6.2 m`，故 `gridVoxelNumX` 必须从 `161` 改为 $6.2/0.02+1=311$。`gridVoxelOffsetY=4.5 m` 和 `gridVoxelNumY=451` 不变，因为该值已覆盖新曲线约 $\pm1.50 m$ 的横向最大偏移，并保留足够绕障余量。
+- 已同步更新 `path_generator.py` 中的 `offset_x=6.2`、`voxel_num_x=311`，`localPlanner.cpp` 中的 `gridVoxelOffsetX=6.2`、`gridVoxelNumX=311`，以及 launch 中对应参数。必须重新生成四个路径库文件；否则运行时会用新网格索引查询旧倒排表，碰撞判定不可信。
 
 **什么情况下才需要修改这几个网格参数（以及连带的编译期常量）**
 
-- 如果之后把 `dis` 改大（例如为了增大路径覆盖距离），使 $3\times dis$ 超过当前 `gridVoxelOffsetX=3.2 m`，则必须同步增大 `gridVoxelOffsetX`（和/或 `gridVoxelSize`），并相应修改 `localPlanner.cpp` 里 `const int gridVoxelNumX = 161;` 这一行为新的 $\text{Offset}/\text{Size}+1$，重新编译 `local_planner` 包，再重新生成四个路径文件——四处（launch 参数、`path_generator.py` 里的 `offset_x/voxel_size`、C++ 编译期常量、重新生成的数据文件）必须同时改，缺一处就会导致索引越界或体素对应错误。
+- 如果之后再次增大 `dis`，使 $3\times dis$ 接近或超过当前 `gridVoxelOffsetX=6.2 m`，则必须同步增大 `gridVoxelOffsetX`（和/或 `gridVoxelSize`），并相应修改 `localPlanner.cpp` 里 `gridVoxelNumX=311` 为新的 $\text{Offset}/\text{Size}+1$，重新编译 `local_planner` 包，再重新生成四个路径文件——启动参数、`path_generator.py`、C++ 编译期常量、重新生成的数据文件必须同时改。
 - 如果修改 `vehicleLength/Width` 或 `searchRadius`（车辆包络、离线碰撞查询半径），也需要重新生成 `correspondences.txt`，因为 `search_radius` 直接决定了每个格子查询命中哪些路径；但只改这类参数通常不需要改 `gridVoxelOffsetX/Y`、`gridVoxelNumX/Y`（除非同时也改了 `dis`）。
 - 简言之：`dis` 决定是否需要碰网格覆盖范围这条硬约束；`angle`/`scale` 只影响曲率，不影响是否需要改网格参数。
 
@@ -562,6 +587,45 @@ $$R_{min} = \frac{L}{\tan(\delta_{max})}=\frac{0.55}{\tan(0.45)}\approx 1.14m$$
 
 三段各 7 种取值组合共 $7\times7\times7=343$ 条曲线（`pathNum=343`），再用样条把这些折线光滑成弧线。因此 **`angle` 本质上是"候选曲线在每一段路程上允许偏转的最大角度"，直接决定了曲线的转弯幅度和曲率**：`angle` 越大，路径库里出现的转弯越急（曲率半径越小），路径覆盖的总朝向范围也越宽；`angle` 越小，路径越接近直线，覆盖的朝向范围越窄，但每条路径能被 Ackermann 底盘实际执行的把握越大。`scale=0.65` 让后两段的偏转幅度依次收窄，使曲线呈现"先大转、后微调"的锥形收敛效果，这个值本次未改动。
 
+**`dis` 改为 2.0 m 后，`angle` 还要不要改**：需要重新校核，但不应仅凭旧的 `angle=7.0` 结论直接再改一次。若生成器的控制点坐标严格按同一比例 $k=dis_{new}/dis_{old}$ 缩放，路径参数化可写为 $P_{new}(u)=kP_{old}(u)$。曲率定义为：
+
+$$\kappa(u)=\frac{|x'(u)y''(u)-y'(u)x''(u)|}{(x'(u)^2+y'(u)^2)^{3/2}},\qquad R(u)=\frac{1}{\kappa(u)}$$
+
+代入 $P_{new}=kP_{old}$ 后有 $P'_{new}=kP'_{old}$、$P''_{new}=kP''_{old}$，因此 $\kappa_{new}=\kappa_{old}/k$、$R_{new}=kR_{old}$。这解释了为什么增大 `dis` 通常会增大转弯半径。但本生成器在末端使用 `3*dis-0.001` 和 `3*dis` 两个相距固定 1 mm 的锚点固定朝向，该 1 mm 间隔不会随 `dis` 等比放大，所以这只是近似关系，不能直接用 $2\times1.30=2.60$ 当作最终测量结果。
+
+对实际生成的全部 343 条路径按三点外接圆法全量测量，`dis=2.0`、`angle=7.0`、`scale=0.65` 的结果为：
+
+$$R_{lib}=2.294\,\text{m}$$
+
+规划器还会在运行时乘以 `pathScale`；最小可执行半径不是 $R_{lib}$，而是：
+
+$$R_{actual,min}=minPathScale\times R_{lib}(dis, angle, scale)$$
+
+当前 `minPathScale=0.9` 时，`angle=7.0` 的最坏情况为 $0.9\times2.294=2.065\,\text{m}$，明显大于底盘 $R_{min}=1.14\,\text{m}$。因此 `dis=2.0`、`angle=7.0`、`scale=0.65` 是**保守且可执行**的配置，但候选路径会比底盘能力允许的更平缓，绕障方向覆盖会减少。
+
+这几个参数的耦合关系如下：
+
+- `dis` 增大：路径总长 $3\times dis$ 与曲率半径均近似同比增大；但必须同步扩展碰撞网格 `gridVoxelOffsetX`、`gridVoxelNumX` 并重建 `correspondences.txt`。
+- `angle` 增大：每段允许偏转更大，曲率半径减小、绕障能力增强；必须重新生成路径并重新计算 $R_{lib}$。
+- `scale` 增大：后两段保留更多转向幅度，通常使部分路径更急；减小则让路径更快趋直。改变后同样必须重新计算 $R_{lib}$。
+- `pathScale`、`minPathScale` 增大：运行时整体放大路径，曲率半径同比增大；减小则使路径更短、更急。它们不需要重建路径库，但必须满足 $minPathScale\times R_{lib}\ge R_{min}$。
+
+若希望在 `dis=2.0` 下恢复更多转弯能力，可以提高 `angle`，但每一档都必须重新生成四个路径文件，并以 $minPathScale\times R_{lib}\ge1.14\,\text{m}$ 为硬约束；若按 10%~20% 工程余量，建议目标为 $minPathScale\times R_{lib}\ge1.30\sim1.37\,\text{m}$。在 `minPathScale=0.9` 下，对应路径库自身应至少达到 $R_{lib}\ge1.45\sim1.52\,\text{m}$。
+
+本项目已对 `dis=2.0`、`scale=0.65` 的全部 343 条路径完成扫描，结果如下：
+
+| `angle`（度） | $R_{lib}$（m） | $0.9\times R_{lib}$（m） | 结论 |
+| --- | ---: | ---: | --- |
+| 7 | 2.294 | 2.065 | 安全但过于保守 |
+| 10 | 1.610 | 1.449 | 安全，余量约 27% |
+| **11** | **1.465** | **1.318** | **推荐：余量约 16%，且尽可能保留绕障能力** |
+| 12 | 1.344 | 1.210 | 超过硬下限，但工程余量不足 |
+| 13 | 1.242 | 1.118 | 不满足硬下限 |
+| 14 | 1.155 | 1.039 | 不满足硬下限 |
+| 15 | 1.079 | 0.971 | 不满足硬下限，不能用于重建 |
+
+
+
 如果候选路径中某一段的曲率半径 $R_{path} < R_{min}$，即使 `pathFollower` 正确地把角速度请求换算成转向角，转向角也会被限幅在 $\delta_{max}$，导致车辆实际走出的弧线比路径更"直"，从而系统性地切内角、蹭到路径内侧的障碍物，且这个误差不会因为调高增益而消失，因为不是控制问题而是路径本身不可行。
 
 **曲率半径 $R_{lib}$ 计算**：`paths.ply` 里每条路径只有离散点（按弧长每 `0.01 m` 采样一次），没有现成的曲率公式，因此用"外接圆半径"这个纯几何量做近似估计，步骤如下：
@@ -577,7 +641,7 @@ $$R_{min} = \frac{L}{\tan(\delta_{max})}=\frac{0.55}{\tan(0.45)}\approx 1.14m$$
    $$R=\frac{abc}{4\cdot Area}$$
 
    得到这三点处的局部曲率半径估计。三点越接近共线，$Area$ 越接近 0，$R$ 越大（对应曲率趋近于 0，即接近直线），这与"外接圆半径就是局部曲率半径的近似"这一几何事实一致；因此可以跳过 $Area$ 过小（视为共线/数值噪声，不计入统计）的窗口，避免除以接近 0 的数产生虚假的极大值或 NaN。
-4. **取最小值作为该路径的最紧弯半径**：对一条路径内所有三点窗口算出的 $R$ 取最小值，得到这条路径的最紧弯曲率半径；再对全部 342/343 条路径取最小值，得到整个路径库在 `pathScale=1` 时的最小曲率半径 $R_{lib}$（本仓库最初测得约 $0.39\,\text{m}$，收窄 `angle` 后约 $1.30\,\text{m}$）。
+4. **取最小值作为该路径的最紧弯半径**：对一条路径内所有三点窗口算出的 $R$ 取最小值，得到这条路径的最紧弯曲率半径；再对全部 342/343 条路径取最小值，得到整个路径库在 `pathScale=1` 时的最小曲率半径 $R_{lib}$。历史 `dis=1.0`、`angle=7.0` 路径库测得约 $1.30\,\text{m}$；当前 `dis=2.0` 时应以重新生成后的文件重新测量，不能把旧值直接当作当前测量值。
 5. **必要时校验是否为端点数值伪影**：由于每条曲线的末端用了两个几乎重合的控制点（`3*dis-0.001` 与 `3*dis`）来固定终点朝向，可能在路径末尾引入局部尖锐但不代表整体曲率的伪影；因此额外对比过"去掉末尾若干个采样点后再算一次最小值"，确认最紧弯半径不是仅由末端伪影决定的（本次结果在去掉末尾点前后一致，说明测得的最小曲率确实来自路径中段的真实几何形状，而不是末端拼接伪影）。
 
 这个方法本质上是一个**离散、近似**的曲率下界估计（依赖 stride 的选取），不是解析曲率公式；它的价值在于足够快速、且能对全部 343 条路径做批量、全量（非抽样）扫描，用来判断"路径库是否明显低于 $R_{min}$"这个数量级问题，比逐条路径手工检查更可靠。若要更严谨，可以改用样条的解析曲率公式 $\kappa=\dfrac{x'y''-y'x''}{(x'^2+y'^2)^{3/2}}$ 直接对 `path_generator.py` 里的 `CubicSpline` 结果求导计算，但对本次"数量级校核 + 选参数"的目的而言，离散外接圆估计已经足够。
@@ -585,7 +649,7 @@ $$R_{min} = \frac{L}{\tan(\delta_{max})}=\frac{0.55}{\tan(0.45)}\approx 1.14m$$
 - **影响**：路径规划器认为无碰撞的路径，车辆实际执行时可能发生碰撞；越小的候选路径尺度（`pathScale` 越小、转弯越急的方向）风险越大。
 - **本仓库已实测并应用的结果**：对 `paths.ply` 做逐路径三点圆弧半径估计（每 0.2 m 采样一次，覆盖全部 343 条路径），发现原始曲线库（`path_generator.py` 中 `dis=1.0`、`angle=27.0`、`scale=0.65`）在 `pathScale=1` 时最小曲率半径仅约 $0.39\,\text{m}$，且 342 条路径中有 268 条（约 78%）的最紧弯曲率半径低于 $R_{min}=1.14\,\text{m}$，即绝大多数候选路径对本车而言并非物理可行。碰撞检测网格 `gridVoxelOffsetX=3.2\,\text{m}`（`localPlanner.cpp` 硬编码 `gridVoxelNumX=161`）要求路径总长 $3\times dis$ 不超过约 3.2 m，因此保持 `dis=1.0` 不变，只将 `angle` 从 `27.0` 收窄为 `7.0`（`scale=0.65` 不变），重新生成后最小曲率半径提升到约 $1.30\,\text{m}$（第 1 百分位约 $1.40\,\text{m}$、中位数约 $2.98\,\text{m}$），满足 $R_{min}=1.14\,\text{m}$ 并留有约 14% 的安全余量。仓库中的 `paths.ply`、`startPaths.ply`、`pathList.ply`、`correspondences.txt` 已按此配置重新生成。
 
-**最终选 `7.0`**：对 `angle` 做了一次实测扫描（固定 `dis=1.0`、`scale=0.65`，对生成后的曲线做逐路径最小曲率半径估计）：
+**历史上为何在 `dis=1.0` 时选 `7.0`**：以下扫描固定 `dis=1.0`、`scale=0.65`，用于说明旧短路径库的选择依据；它不能直接作为当前 `dis=2.0` 的最终 `angle` 结论：
 
 | `angle`（度） | 库内最小曲率半径 $R_{lib}$（约） | 相对 $R_{min}=1.14\text{m}$ |
 | --- | --- | --- |
@@ -599,8 +663,8 @@ $$R_{min} = \frac{L}{\tan(\delta_{max})}=\frac{0.55}{\tan(0.45)}\approx 1.14m$$
 
 选择依据：
 1. `angle=8.0` 恰好等于 $R_{min}$，没有任何余量——曲率估计本身是基于离散采样点的近似值，实车轮胎侧滑、转向间隙、里程计噪声都会侵蚀这点余量，实际使用时几乎必然出现部分路径不可行。
-2. `angle=7.0` 是能提供有意义安全余量（约 14%，工程上常用的 10%~20% 量级）的最大取值——`angle` 越大，路径库能覆盖的转向范围越宽，规划器在绕障、对齐目标方向时的选择就越丰富；因此在"满足 $R_{min}$ 有余量"的前提下，优先选择尽量大的 `angle`，而不是进一步收窄到 6.0、6.5 去换取更大但非必要的余量，牺牲掉本可以用上的转弯能力。
-3. 没有选择通过增大 `dis` 来降曲率（如 `dis=1.2` 配合更大 `angle`），是因为 `dis` 增大会让路径总长 $3\times dis$ 超过 `localPlanner.cpp` 中硬编码的碰撞网格范围 `gridVoxelOffsetX=3.2 m`（`gridVoxelNumX=161`），需要同步修改并重新编译 C++ 代码；只改 `angle` 是纯数据层面的改动，不涉及代码改动，风险更小、回滚也更容易（`git diff` 即可看到全部改动）。
+2. `angle=7.0` 是在 `dis=1.0` 下能提供约 14% 安全余量的最大取值；路径越长后，该余量会变化，必须按上面的 $R_{actual,min}$ 公式重新验证。
+3. 当前已将 `dis` 增至 2.0 m，并配套将前向碰撞网格从 `3.2 m/161 格` 扩为 `6.2 m/311 格`，所以现在可以在不缩短路径的前提下，逐档上调 `angle` 以恢复绕障能力；每次上调后都需要重建和校核路径库。
 
 - **调整策略**：
   1. 用底盘参数算出 $R_{min}$（本车为 $1.14\,\text{m}$）。
