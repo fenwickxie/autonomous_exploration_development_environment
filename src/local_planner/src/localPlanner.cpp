@@ -33,7 +33,7 @@ using namespace std;
 
 const double PI = 3.1415926;
 
-#define PLOTPATHSET 1
+#define PLOTPATHSET 1 // 是否绘制路径集合
 
 // 几何、感知和行为参数从私有 ROS 命名空间读取，正常调参应修改 launch 文件。
 string pathFolder;
@@ -41,59 +41,59 @@ double vehicleLength = 0.85;
 double vehicleWidth = 0.6;
 double sensorOffsetX = 0;
 double sensorOffsetY = 0;
-bool twoWayDrive = true;
-double laserVoxelSize = 0.05;
-double terrainVoxelSize = 0.2;
-bool useTerrainAnalysis = false;
-bool checkObstacle = true;
-bool checkRotObstacle = false;
-double adjacentRange = 3.5;
-double obstacleHeightThre = 0.2;
-double groundHeightThre = 0.1;
-double costHeightThre = 0.1;
-double costScore = 0.02;
-bool useCost = false;
-const int laserCloudStackNum = 1;
-int laserCloudCount = 0;
-int pointPerPathThre = 2;
-double minRelZ = -0.5;
-double maxRelZ = 0.25;
-double maxSpeed = 1.0;
+bool twoWayDrive = true; // 是否允许双向行驶,倒车
+double laserVoxelSize = 0.05; // 激光点云体素滤波的体素大小
+double terrainVoxelSize = 0.2; // 地形点云体素滤波的体素大小
+bool useTerrainAnalysis = false; // 是否使用地形分析
+bool checkObstacle = true; // 是否检查障碍物
+bool checkRotObstacle = false; // 是否检查旋转障碍物
+double adjacentRange = 3.5; // 邻近范围
+double obstacleHeightThre = 0.2; // 障碍物高度阈值
+double groundHeightThre = 0.1; // 地面高度阈值
+double costHeightThre = 0.1; // 代价高度阈值
+double costScore = 0.02; // 代价评分
+bool useCost = false; // 是否使用代价
+const int laserCloudStackNum = 1; // 激光点云栈的数量
+int laserCloudCount = 0; // 当前激光点云计数
+int pointPerPathThre = 2; // 每条路径的点数阈值
+double minRelZ = -0.5; // 最小相对高度
+double maxRelZ = 0.25; // 最大相对高度
+double maxSpeed = 1.0; // 最大速度
 double dirWeight = 0.02; // 方向权重，用于计算路径方向与车辆方向的偏差评分
-double dirThre = 90.0; // 方向阈值，单位为度用于判断路径方向与车辆方向的偏差
+double dirThre = 90.0; // 方向阈值，单位为度，用于判断路径方向与车辆方向的偏差, 超过该阈值则认为路径方向与车辆方向不一致
 bool dirToVehicle = false; // 是否将路径方向与车辆方向对齐
 double pathScale = 1.0; // 路径缩放系数
-double minPathScale = 0.75;
-double pathScaleStep = 0.25;
-bool pathScaleBySpeed = true;
-double minPathRange = 1.0;
-double pathRangeStep = 0.5;
-bool pathRangeBySpeed = true;
-bool pathCropByGoal = true;
-bool noPathReverse = true;
-bool autonomyMode = false;
-double autonomySpeed = 1.0;
-double joyToSpeedDelay = 2.0;
-double joyToCheckObstacleDelay = 5.0;
-double goalClearRange = 0.5;
-double goalX = 0;
-double goalY = 0;
+double minPathScale = 0.75; // 最小路径缩放系数
+double pathScaleStep = 0.25; // 路径缩放步长
+bool pathScaleBySpeed = true; // 是否根据速度调整路径缩放
+double minPathRange = 1.0; // 最小路径范围
+double pathRangeStep = 0.5; // 路径范围步长
+bool pathRangeBySpeed = true; // 是否根据速度调整路径范围
+bool pathCropByGoal = true; // 是否根据目标裁剪路径
+bool noPathReverse = true; // 是否禁止路径倒车
+bool autonomyMode = false; // 是否开启自主模式
+double autonomySpeed = 1.0; // 自主模式下的速度
+double joyToSpeedDelay = 2.0; // 操纵杆到速度的延迟
+double joyToCheckObstacleDelay = 5.0; // 操纵杆到检查障碍物的延迟
+double goalClearRange = 0.5; // 目标清除范围
+double goalX = 0; // 目标X坐标
+double goalY = 0; // 目标Y坐标
 
-float joySpeed = 0;
-float joySpeedRaw = 0;
-float joyDir = 0;
+float joySpeed = 0; // 当前操纵杆速度
+float joySpeedRaw = 0; // 原始操纵杆速度
+float joyDir = 0; // 当前操纵杆方向
 
 // 离线路径库契约。pathNum 和网格尺寸必须与 path_generator.py 及 paths/ 中的文件一致，
 // 不能只修改 launch 参数。
-const int pathNum = 343;
-const int groupNum = 7;
-float gridVoxelSize = 0.02;
-float searchRadius = 0.55;
-float gridVoxelOffsetX = 5.0;
-float gridVoxelOffsetY = 4.5;
-const int gridVoxelNumX = 251;
-const int gridVoxelNumY = 451;
-const int gridVoxelNum = gridVoxelNumX * gridVoxelNumY;
+const int pathNum = 343; // 路径数量
+const int groupNum = 7; // 路径组数量
+float gridVoxelSize = 0.02; // 栅格体素大小
+float searchRadius = 0.55; // 搜索半径
+float gridVoxelOffsetX = 5.0; // 栅格体素在X方向的偏移
+float gridVoxelOffsetY = 4.5; // 栅格体素在Y方向的偏移
+const int gridVoxelNumX = 251; // 栅格体素在X方向的数量
+const int gridVoxelNumY = 451; // 栅格体素在Y方向的数量
+const int gridVoxelNum = gridVoxelNumX * gridVoxelNumY; // 栅格体素总数量
 
 pcl::PointCloud<pcl::PointXYZI>::Ptr laserCloud(new pcl::PointCloud<pcl::PointXYZI>());
 pcl::PointCloud<pcl::PointXYZI>::Ptr laserCloudCrop(new pcl::PointCloud<pcl::PointXYZI>());
@@ -101,35 +101,40 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr laserCloudDwz(new pcl::PointCloud<pcl::Poin
 pcl::PointCloud<pcl::PointXYZI>::Ptr terrainCloud(new pcl::PointCloud<pcl::PointXYZI>());
 pcl::PointCloud<pcl::PointXYZI>::Ptr terrainCloudCrop(new pcl::PointCloud<pcl::PointXYZI>());
 pcl::PointCloud<pcl::PointXYZI>::Ptr terrainCloudDwz(new pcl::PointCloud<pcl::PointXYZI>());
-pcl::PointCloud<pcl::PointXYZI>::Ptr laserCloudStack[laserCloudStackNum];
-pcl::PointCloud<pcl::PointXYZI>::Ptr plannerCloud(new pcl::PointCloud<pcl::PointXYZI>());
-pcl::PointCloud<pcl::PointXYZI>::Ptr plannerCloudCrop(new pcl::PointCloud<pcl::PointXYZI>());
-pcl::PointCloud<pcl::PointXYZI>::Ptr boundaryCloud(new pcl::PointCloud<pcl::PointXYZI>());
-pcl::PointCloud<pcl::PointXYZI>::Ptr addedObstacles(new pcl::PointCloud<pcl::PointXYZI>());
-pcl::PointCloud<pcl::PointXYZ>::Ptr startPaths[groupNum];
+pcl::PointCloud<pcl::PointXYZI>::Ptr laserCloudStack[laserCloudStackNum]; // 激光点云栈
+pcl::PointCloud<pcl::PointXYZI>::Ptr plannerCloud(new pcl::PointCloud<pcl::PointXYZI>()); // 规划点云
+pcl::PointCloud<pcl::PointXYZI>::Ptr plannerCloudCrop(new pcl::PointCloud<pcl::PointXYZI>()); // 裁剪后的规划点云
+pcl::PointCloud<pcl::PointXYZI>::Ptr boundaryCloud(new pcl::PointCloud<pcl::PointXYZI>()); // 边界点云
+pcl::PointCloud<pcl::PointXYZI>::Ptr addedObstacles(new pcl::PointCloud<pcl::PointXYZI>()); // 新增障碍物点云
+pcl::PointCloud<pcl::PointXYZ>::Ptr startPaths[groupNum]; // 起始路径点云数组
 #if PLOTPATHSET == 1
-pcl::PointCloud<pcl::PointXYZI>::Ptr paths[pathNum];
-pcl::PointCloud<pcl::PointXYZI>::Ptr freePaths(new pcl::PointCloud<pcl::PointXYZI>());
+pcl::PointCloud<pcl::PointXYZI>::Ptr paths[pathNum]; // 路径点云数组
+pcl::PointCloud<pcl::PointXYZI>::Ptr freePaths(new pcl::PointCloud<pcl::PointXYZI>()); // 空闲路径点云
 #endif
 
-int pathList[pathNum] = {0};
-float endDirPathList[pathNum] = {0};
-int clearPathList[36 * pathNum] = {0};
-float pathPenaltyList[36 * pathNum] = {0};
-float clearPathPerGroupScore[36 * groupNum] = {0};
-std::vector<int> correspondences[gridVoxelNum];
+int pathList[pathNum] = {0}; // 路径列表
+float endDirPathList[pathNum] = {0}; // 路径终点方向列表
+int clearPathList[36 * pathNum] = {0}; // 清除路径列表
+float pathPenaltyList[36 * pathNum] = {0}; // 路径惩罚列表
+float clearPathPerGroupScore[36 * groupNum] = {0}; // 每组清除路径得分
+std::vector<int> correspondences[gridVoxelNum]; // 栅格体素对应的点云索引列表
 
-bool newLaserCloud = false;
-bool newTerrainCloud = false;
+bool newLaserCloud = false; // 是否有新的激光点云
+bool newTerrainCloud = false; // 是否有新的地形点云
 
-double odomTime = 0;
-double joyTime = 0;
+double odomTime = 0; // 里程计时间戳
+double joyTime = 0; // 操纵杆时间戳
 
-float vehicleRoll = 0, vehiclePitch = 0, vehicleYaw = 0;
-float vehicleX = 0, vehicleY = 0, vehicleZ = 0;
+float vehicleRoll = 0, vehiclePitch = 0, vehicleYaw = 0; // 车辆姿态
+float vehicleX = 0, vehicleY = 0, vehicleZ = 0; // 车辆位置
 
-pcl::VoxelGrid<pcl::PointXYZI> laserDwzFilter, terrainDwzFilter;
+pcl::VoxelGrid<pcl::PointXYZI> laserDwzFilter, terrainDwzFilter; // 激光点云和地形点云下采样滤波器
 
+/**
+ * @brief 动态参数配置回调函数
+ * @param config 动态参数配置对象
+ * @param level 参数级别
+ */
 void reconfigureCallback(local_planner::LocalPlannerConfig &config, uint32_t)
 {
   twoWayDrive = config.twoWayDrive;
@@ -157,6 +162,10 @@ void reconfigureCallback(local_planner::LocalPlannerConfig &config, uint32_t)
   goalClearRange = config.goalClearRange;
 }
 
+/**
+ * @brief 里程计回调函数，用于更新车辆的位姿信息
+ * @param odom 里程计消息指针
+ */
 void odometryHandler(const nav_msgs::Odometry::ConstPtr& odom)
 {
   // 用 sensorOffset 将传感器位姿换算为车辆中心位姿，后者用于碰撞检查和候选路径放置。
@@ -174,6 +183,10 @@ void odometryHandler(const nav_msgs::Odometry::ConstPtr& odom)
   vehicleZ = odom->pose.pose.position.z;
 }
 
+/**
+ * @brief 激光点云回调函数，用于更新车辆周围的点云信息
+ * @param laserCloud2 激光点云消息指针
+ */
 void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloud2)
 {
   if (!useTerrainAnalysis) {
@@ -208,6 +221,10 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloud2)
   }
 }
 
+/**
+ * @brief 地形点云回调函数，用于更新车辆周围的地形信息
+ * @param terrainCloud2 地形点云消息指针
+ */
 void terrainCloudHandler(const sensor_msgs::PointCloud2ConstPtr& terrainCloud2)
 {
   if (useTerrainAnalysis) {
@@ -242,6 +259,10 @@ void terrainCloudHandler(const sensor_msgs::PointCloud2ConstPtr& terrainCloud2)
   }
 }
 
+/**
+ * @brief 操纵杆回调函数，用于更新手动行驶的方向和速度
+ * @param joy 操纵杆消息指针
+ */
 void joystickHandler(const sensor_msgs::Joy::ConstPtr& joy)
 {
   // PS3 风格轴提供手动行驶方向和速度；触发轴还选择自主模式及是否启用障碍检查。
@@ -272,12 +293,20 @@ void joystickHandler(const sensor_msgs::Joy::ConstPtr& joy)
   }
 }
 
+/**
+ * @brief 目标点回调函数，用于更新车辆的目标位置
+ * @param goal 目标点消息指针
+ */
 void goalHandler(const geometry_msgs::PointStamped::ConstPtr& goal)
 {
   goalX = goal->point.x;
   goalY = goal->point.y;
 }
 
+/**
+ * @brief 速度回调函数，用于更新车辆的速度信息
+ * @param speed 速度消息指针
+ */
 void speedHandler(const std_msgs::Float32::ConstPtr& speed)
 {
   double speedTime = ros::Time::now().toSec();
@@ -290,6 +319,10 @@ void speedHandler(const std_msgs::Float32::ConstPtr& speed)
   }
 }
 
+/**
+ * @brief 边界回调函数，用于更新车辆周围的边界信息
+ * @param boundary 边界消息指针
+ */
 void boundaryHandler(const geometry_msgs::PolygonStamped::ConstPtr& boundary)
 {
   // 将多边形每条边离散成稠密的高 intensity 障碍点；重复点使其达到规划器的碰撞阈值。
@@ -329,7 +362,10 @@ void boundaryHandler(const geometry_msgs::PolygonStamped::ConstPtr& boundary)
     }
   }
 }
-
+/**
+ * @brief 外部添加障碍回调函数，用于更新车辆周围的外部添加障碍信息
+ * @param addedObstacles2 外部添加障碍点云消息指针
+ */
 void addedObstaclesHandler(const sensor_msgs::PointCloud2ConstPtr& addedObstacles2)
 {
   // 外部标注无论原始数值为何，始终视为硬障碍。
@@ -341,7 +377,10 @@ void addedObstaclesHandler(const sensor_msgs::PointCloud2ConstPtr& addedObstacle
     addedObstacles->points[i].intensity = 200.0;
   }
 }
-
+/**
+ * @brief 障碍检查回调函数，用于更新车辆的障碍检查状态
+ * @param checkObs 障碍检查消息指针
+ */
 void checkObstacleHandler(const std_msgs::Bool::ConstPtr& checkObs)
 {
   double checkObsTime = ros::Time::now().toSec();
@@ -351,11 +390,20 @@ void checkObstacleHandler(const std_msgs::Bool::ConstPtr& checkObs)
   }
 }
 
+/**
+ * @brief 双向行驶回调函数，用于更新车辆的双向行驶状态
+ * @param twoWayDr 双向行驶消息指针
+ */
 void twoWayDriveHandler(const std_msgs::Bool::ConstPtr& twoWayDr)
 {
   twoWayDrive = twoWayDr->data;
 }
 
+/**
+ * @brief 读取 PLY 文件头函数，用于获取顶点数量
+ * @param filePtr PLY 文件指针
+ * @return 顶点数量
+ */
 int readPlyHeader(FILE *filePtr)
 {
   // 规划器 PLY 均为 ASCII 格式；后续按生成器固定行布局解析前，只需读取顶点数。
@@ -384,6 +432,9 @@ int readPlyHeader(FILE *filePtr)
   return pointNum;
 }
 
+/**
+ * @brief 读取起始路径函数
+ */
 void readStartPaths()
 {
   // 起始路径是每个输出组的短代表路径。实际发布的是选中的组，而非 343 条测试曲线之一。
@@ -419,6 +470,9 @@ void readStartPaths()
 }
 
 #if PLOTPATHSET == 1
+/**
+ * @brief 读取完整路径函数
+ */
 void readPaths()
 {
   // 完整路径在加载时下采样并供可视化使用；碰撞检查本身使用预计算的对应表。
@@ -461,6 +515,9 @@ void readPaths()
 }
 #endif
 
+/**
+ * @brief 读取路径列表函数
+ */
 void readPathList()
 {
   // 保存候选路径所属分组和末端方向，以供后续评分。
@@ -500,6 +557,9 @@ void readPathList()
   fclose(filePtr);
 }
 
+/**
+ * @brief 读取路径对应关系函数
+ */
 void readCorrespondences()
 {
   // 每行格式为：体素编号、零个或多个被阻塞路径编号、-1 结束标记；该倒排索引是规划器的关键优化。
@@ -699,11 +759,17 @@ int main(int argc, char** argv)
       pcl::PointXYZI point;
       plannerCloudCrop->clear();
       int plannerCloudSize = plannerCloud->points.size();
+      // 将全局坐标系下的点云转换到车辆坐标系下，计算距离用于筛选并裁剪出车辆周围的点云
       for (int i = 0; i < plannerCloudSize; i++) {
         float pointX1 = plannerCloud->points[i].x - vehicleX;
         float pointY1 = plannerCloud->points[i].y - vehicleY;
         float pointZ1 = plannerCloud->points[i].z - vehicleZ;
 
+        // 为什么转到车辆坐标系下？
+        // 因为后续的路径规划和障碍物检测都是在车辆坐标系下进行的，所以需要将全局坐标系下的点云转换到车辆坐标系下。
+
+        // 为什么后续的路径规划和障碍物检测都是在车辆坐标系下进行？
+        // 因为**车辆的传感器数据和控制命令**都是基于车辆自身的坐标系，所以在车辆坐标系下进行路径规划和障碍物检测更加直观和高效。
         point.x = pointX1 * cosVehicleYaw + pointY1 * sinVehicleYaw;
         point.y = -pointX1 * sinVehicleYaw + pointY1 * cosVehicleYaw;
         point.z = pointZ1;
@@ -716,6 +782,7 @@ int main(int argc, char** argv)
       }
 
       int boundaryCloudSize = boundaryCloud->points.size();
+      // 将边界点云转换到车辆坐标系下，并裁剪出车辆周围的点云。
       for (int i = 0; i < boundaryCloudSize; i++) {
         point.x = ((boundaryCloud->points[i].x - vehicleX) * cosVehicleYaw 
                 + (boundaryCloud->points[i].y - vehicleY) * sinVehicleYaw);
@@ -731,6 +798,7 @@ int main(int argc, char** argv)
       }
 
       int addedObstaclesSize = addedObstacles->points.size();
+      // 将新增障碍物点云转换到车辆坐标系下，并裁剪出车辆周围的点云。
       for (int i = 0; i < addedObstaclesSize; i++) {
         point.x = ((addedObstacles->points[i].x - vehicleX) * cosVehicleYaw 
                 + (addedObstacles->points[i].y - vehicleY) * sinVehicleYaw);
@@ -760,6 +828,7 @@ int main(int argc, char** argv)
         relativeGoalDis = sqrt(relativeGoalX * relativeGoalX + relativeGoalY * relativeGoalY);
         joyDir = atan2(relativeGoalY, relativeGoalX) * 180 / PI;
 
+        // 如果车辆不支持双向行驶，则限制手柄方向在 [-90, 90] 范围内。
         if (!twoWayDrive) {
           if (joyDir > 90.0) joyDir = 90.0;
           else if (joyDir < -90.0) joyDir = -90.0;
@@ -791,8 +860,8 @@ int main(int argc, char** argv)
           if (joyDir2 > 180.0) joyDir2 -= 360.0;
         }
 
-        float minObsAngCW = -180.0;
-        float minObsAngCCW = 180.0;
+        float minObsAngCW = -180.0; // 顺时针方向上最小的障碍物角度
+        float minObsAngCCW = 180.0; // 逆时针方向上最小的障碍物角度
         float diameter = sqrt(vehicleLength / 2.0 * vehicleLength / 2.0 + vehicleWidth / 2.0 * vehicleWidth / 2.0);
         float angOffset = atan2(vehicleWidth, vehicleLength) * 180.0 / PI;
         int plannerCloudCropSize = plannerCloudCrop->points.size();
@@ -802,13 +871,16 @@ int main(int argc, char** argv)
           float h = plannerCloudCrop->points[i].intensity;
           float dis = sqrt(x * x + y * y);
 
+          // 如果障碍物距离在路径规划范围内，并且在目标点附近或不按目标裁剪，同时需要进行障碍物检测，则进行路径阻塞计算。
           if (dis < pathRange / pathScale && (dis <= (relativeGoalDis2 + goalClearRange) / pathScale || !pathCropByGoal) && checkObstacle) {
             for (int rotDir = 0; rotDir < 36; rotDir++) {
               float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
               float angDiff = fabs(joyDir2 - (10.0 * rotDir - 180.0));
+              // 如果角度差大于 180 度，则取补角，使角度差在 [0, 180] 范围内。
               if (angDiff > 180.0) {
                 angDiff = 360.0 - angDiff;
               }
+              // 如果角度差在允许范围内，则继续进行路径阻塞计算。
               if ((angDiff > dirThre && !dirToVehicle) || (fabs(10.0 * rotDir - 180.0) > dirThre && fabs(joyDir2) <= 90.0 && dirToVehicle) ||
                   ((10.0 * rotDir > dirThre && 360.0 - 10.0 * rotDir > dirThre) && fabs(joyDir2) > 90.0 && dirToVehicle)) {
                 continue;
@@ -822,10 +894,12 @@ int main(int argc, char** argv)
 
               int indX = int((gridVoxelOffsetX + gridVoxelSize / 2 - x2) / gridVoxelSize);
               int indY = int((gridVoxelOffsetY + gridVoxelSize / 2 - y2 / scaleY) / gridVoxelSize);
+              // 如果体素索引在有效范围内，则进行路径阻塞计算。
               if (indX >= 0 && indX < gridVoxelNumX && indY >= 0 && indY < gridVoxelNumY) {
                 int ind = gridVoxelNumY * indX + indY;
                 // 一个占据体素会阻塞所有扫掠车体区域覆盖它的候选路径，无需在线逐条做几何查询。
                 int blockedPathByVoxelNum = correspondences[ind].size();
+                // 遍历所有被该体素阻塞的路径索引，更新路径的清晰度或惩罚值。
                 for (int j = 0; j < blockedPathByVoxelNum; j++) {
                   if (h > obstacleHeightThre || !useTerrainAnalysis) {
                     clearPathList[pathNum * rotDir + correspondences[ind][j]]++;
@@ -839,6 +913,7 @@ int main(int argc, char** argv)
             }
           }
 
+          // 如果障碍物在路径规划范围内，并且在车辆长度或宽度之外，同时高度超过障碍物高度阈值或不使用地形分析，并且需要进行旋转障碍物检测，则计算障碍物角度。计算的障碍物角度用于旋转障碍物的避让策略。
           if (dis < diameter / pathScale && (fabs(x) > vehicleLength / pathScale / 2.0 || fabs(y) > vehicleWidth / pathScale / 2.0) && 
               (h > obstacleHeightThre || !useTerrainAnalysis) && checkRotObstacle) {
             float angObs = atan2(y, x) * 180.0 / PI;
@@ -852,26 +927,32 @@ int main(int argc, char** argv)
           }
         }
 
+        // 如果旋转障碍物的最小角度超出范围，则将其限制在合理范围内。
         if (minObsAngCW > 0) minObsAngCW = 0;
         if (minObsAngCCW < 0) minObsAngCCW = 0;
 
+        // 遍历所有路径组，计算每条路径的得分，并根据旋转方向和障碍物角度进行加权。
         for (int i = 0; i < 36 * pathNum; i++) {
-          int rotDir = int(i / pathNum);
-          float angDiff = fabs(joyDir2 - (10.0 * rotDir - 180.0));
+          int rotDir = int(i / pathNum); // 计算当前路径的旋转方向索引
+          float angDiff = fabs(joyDir2 - (10.0 * rotDir - 180.0)); // 计算当前路径的角度与操纵杆方向的差值
+          // 如果角度差超过 180 度，则取补角，使角度差在 [0, 180] 范围内。
           if (angDiff > 180.0) {
             angDiff = 360.0 - angDiff;
           }
+
+          // 如果角度差在允许范围内，则继续进行路径评分计算。
           if ((angDiff > dirThre && !dirToVehicle) || (fabs(10.0 * rotDir - 180.0) > dirThre && fabs(joyDir2) <= 90.0 && dirToVehicle) ||
               ((10.0 * rotDir > dirThre && 360.0 - 10.0 * rotDir > dirThre) && fabs(joyDir2) > 90.0 && dirToVehicle)) {
             continue;
           }
-
+          
+          // 如果候选路径的碰撞数低于硬阈值，则计算路径的得分。
           if (clearPathList[i] < pointPerPathThre) {
             // 碰撞数低于硬阈值的候选路径可行；较低的地形高度可选地作为软代价降低分数。
-            float penaltyScore = 1.0 - pathPenaltyList[i] / costHeightThre;
-            if (penaltyScore < costScore) penaltyScore = costScore;
+            float penaltyScore = 1.0 - pathPenaltyList[i] / costHeightThre; // 根据地形高度计算路径的惩罚分数，超过阈值会降低分数。
+            if (penaltyScore < costScore) penaltyScore = costScore; // 保证惩罚分数不低于最低分数。
 
-            float dirDiff = fabs(joyDir2 - endDirPathList[i % pathNum] - (10.0 * rotDir - 180.0));
+            float dirDiff = fabs(joyDir2 - endDirPathList[i % pathNum] - (10.0 * rotDir - 180.0)); // 计算当前路径的方向与操纵杆方向的差值
             if (dirDiff > 360.0) {
               dirDiff -= 360.0;
             }
@@ -879,10 +960,13 @@ int main(int argc, char** argv)
               dirDiff = 360.0 - dirDiff;
             }
 
-            float rotDirW;
-            if (rotDir < 18) rotDirW = fabs(fabs(rotDir - 9) + 1);
-            else rotDirW = fabs(fabs(rotDir - 27) + 1);
-            float score = (1 - sqrt(sqrt(dirWeight * dirDiff))) * rotDirW * rotDirW * rotDirW * rotDirW * penaltyScore;
+            float rotDirW; // 计算旋转方向的权重，根据旋转方向索引的不同，给予不同的权重。
+            if (rotDir < 18) rotDirW = fabs(fabs(rotDir - 9) + 1); // 对于前半部分的旋转方向，计算其权重。
+            else rotDirW = fabs(fabs(rotDir - 27) + 1); // 对于后半部分的旋转方向，计算其权重。
+            // 计算路径的最终得分，综合考虑方向差、旋转方向权重和惩罚分数。
+            // 此公式的依据为：路径的方向差越小、旋转方向越接近理想值、地形高度越低，路径得分越高。
+            float score = (1 - sqrt(sqrt(dirWeight * dirDiff))) * rotDirW * rotDirW * rotDirW * rotDirW * penaltyScore; 
+            // 如果路径得分大于 0，则将其累加到对应的路径组得分中。
             if (score > 0) {
               clearPathPerGroupScore[groupNum * rotDir + pathList[i % pathNum]] += score;
             }
@@ -891,11 +975,14 @@ int main(int argc, char** argv)
 
         float maxScore = 0;
         int selectedGroupID = -1;
+        // 遍历所有路径组，选择得分最高且满足旋转角度约束的路径组。
+        // 旋转角度约束是指路径组的旋转角度必须在最小顺时针角度和最小逆时针角度之间，或者在双向行驶模式下满足相应的约束。
         for (int i = 0; i < 36 * groupNum; i++) {
           int rotDir = int(i / groupNum);
           float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
           float rotDeg = 10.0 * rotDir;
           if (rotDeg > 180.0) rotDeg -= 360.0;
+          // 
           if (maxScore < clearPathPerGroupScore[i] && ((rotAng * 180.0 / PI > minObsAngCW && rotAng * 180.0 / PI < minObsAngCCW) || 
               (rotDeg > minObsAngCW && rotDeg < minObsAngCCW && twoWayDrive) || !checkRotObstacle)) {
             maxScore = clearPathPerGroupScore[i];
@@ -903,6 +990,9 @@ int main(int argc, char** argv)
           }
         }
 
+        // 如果找到了得分最高且满足旋转角度约束的路径组，则选中该路径组并生成对应的路径。
+        // 这里生成的路径是对预先生成的路径进行旋转和平移后的结果，以适应当前的车辆姿态和选中的路径组。
+        // 对预先生成的路径进行旋转和平移是从世界坐标系转换到车辆坐标系，以便在车辆坐标系下进行路径跟踪和控制。
         if (selectedGroupID >= 0) {
           int rotDir = int(selectedGroupID / groupNum);
           float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
@@ -910,12 +1000,14 @@ int main(int argc, char** argv)
           selectedGroupID = selectedGroupID % groupNum;
           int selectedPathLength = startPaths[selectedGroupID]->points.size();
           path.poses.resize(selectedPathLength);
+          // 遍历选中路径组的每个路径点，将其从世界坐标系转换到车辆坐标系，并根据路径范围和相对目标距离进行裁剪。
           for (int i = 0; i < selectedPathLength; i++) {
             float x = startPaths[selectedGroupID]->points[i].x;
             float y = startPaths[selectedGroupID]->points[i].y;
             float z = startPaths[selectedGroupID]->points[i].z;
             float dis = sqrt(x * x + y * y);
 
+            // 如果路径点的距离在路径范围和相对目标距离之内，则保留该路径点，否则裁剪路径。
             if (dis <= pathRange / pathScale && dis <= relativeGoalDis2 / pathScale) {
               // 在规划时刻的车体系发布选中组；z 的正负是紧凑的前进/倒退方向标记。
               path.poses[i].pose.position.x = pathScale * (cos(rotAng) * x - sin(rotAng) * y);
@@ -934,6 +1026,7 @@ int main(int argc, char** argv)
 
           #if PLOTPATHSET == 1
           freePaths->clear();
+          // 遍历所有预先生成的路径，进行旋转和平移，并根据路径范围和相对目标距离进行裁剪，生成并绘制自由路径点云。
           for (int i = 0; i < 36 * pathNum; i++) {
             int rotDir = int(i / pathNum);
             float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
@@ -980,6 +1073,7 @@ int main(int argc, char** argv)
           #endif
         }
 
+        // 如果没有选中任何路径组，则尝试通过调整路径缩放和路径范围来寻找可行路径。
         if (selectedGroupID < 0) {
           if (pathScale >= minPathScale + pathScaleStep) {
             pathScale -= pathScaleStep;
@@ -997,7 +1091,7 @@ int main(int argc, char** argv)
         }
       }
       pathScale = defPathScale;
-
+      // 如果在调整路径缩放和路径范围后仍未找到可行路径，则发布空路径。
       if (!pathFound) {
         path.poses.resize(1);
         path.poses[0].pose.position.x = 0;
