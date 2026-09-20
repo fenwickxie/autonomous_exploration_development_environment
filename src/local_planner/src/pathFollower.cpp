@@ -272,7 +272,9 @@ int main(int argc, char** argv)
   ros::Subscriber subTwoWayDrive = nh.subscribe<std_msgs::Bool> ("/two_way_drive", 5, twoWayDriveHandler);
 
   ros::Publisher pubSpeed = nh.advertise<geometry_msgs::Twist> ("/cmd_vel", 5);
+  ros::Publisher pubGoalReached = nh.advertise<std_msgs::Bool> ("/goal_reached", 1, true);
   geometry_msgs::Twist cmd_vel;
+  std_msgs::Bool goalReached;
 
   if (autonomyMode) {
     joySpeed = autonomySpeed / maxSpeed;
@@ -314,6 +316,9 @@ int main(int argc, char** argv)
       disX = path.poses[pathPointID].pose.position.x - vehicleXRel;
       disY = path.poses[pathPointID].pose.position.y - vehicleYRel;
       dis = sqrt(disX * disX + disY * disY);
+
+      // 车辆跟踪到最后一个路径点，且距离终点小于停车阈值时发布 true，否则发布 false
+      goalReached.data = pathPointID == pathSize - 1 && endDis <= stopDisThre;
       float pathDir = atan2(disY, disX);
 
       float dirDiff = vehicleYaw - vehicleYawRec - pathDir;
@@ -392,6 +397,7 @@ int main(int argc, char** argv)
         else cmd_vel.linear.x = vehicleSpeed;
         cmd_vel.angular.z = vehicleYawRate;
         pubSpeed.publish(cmd_vel);
+        pubGoalReached.publish(goalReached);
 
         pubSkipCount = pubSkipNum;
       }
