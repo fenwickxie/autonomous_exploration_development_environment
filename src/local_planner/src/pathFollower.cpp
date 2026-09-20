@@ -15,6 +15,7 @@
 #include <std_msgs/Float32.h>
 #include <nav_msgs/Path.h>
 #include <nav_msgs/Odometry.h>
+#include <geometry_msgs/PointStamped.h>
 #include <geometry_msgs/Twist.h>
 #include <sensor_msgs/Imu.h>
 #include <sensor_msgs/PointCloud2.h>
@@ -94,6 +95,11 @@ int pathPointID = 0;
 bool pathInit = false;
 bool navFwd = true;
 double switchTime = 0;
+double goalX = 0;
+double goalY = 0;
+bool odomReceived = false;
+bool goalReceived = false;
+bool goalReachedPublished = false;
 
 nav_msgs::Path path;
 
@@ -140,6 +146,7 @@ void odomHandler(const nav_msgs::Odometry::ConstPtr& odomIn)
   vehicleX = odomIn->pose.pose.position.x - cos(yaw) * sensorOffsetX + sin(yaw) * sensorOffsetY;
   vehicleY = odomIn->pose.pose.position.y - sin(yaw) * sensorOffsetX - cos(yaw) * sensorOffsetY;
   vehicleZ = odomIn->pose.pose.position.z;
+  odomReceived = true;
 
   if ((fabs(roll) > inclThre * PI / 180.0 || fabs(pitch) > inclThre * PI / 180.0) && useInclToStop) {
     stopInitTime = odomIn->header.stamp.toSec();
@@ -170,6 +177,21 @@ void pathHandler(const nav_msgs::Path::ConstPtr& pathIn)
 
   pathPointID = 0;
   pathInit = true;
+}
+
+void goalHandler(const geometry_msgs::PointStamped::ConstPtr& goal)
+{
+  const double goalChangeThre = 1e-3;
+  double goalChangeX = goal->point.x - goalX;
+  double goalChangeY = goal->point.y - goalY;
+
+  if (!goalReceived || sqrt(goalChangeX * goalChangeX + goalChangeY * goalChangeY) > goalChangeThre) {
+    goalReachedPublished = false;
+  }
+
+  goalX = goal->point.x;
+  goalY = goal->point.y;
+  goalReceived = true;
 }
 
 void joystickHandler(const sensor_msgs::Joy::ConstPtr& joy)
@@ -263,6 +285,8 @@ int main(int argc, char** argv)
 
   ros::Subscriber subPath = nh.subscribe<nav_msgs::Path> ("/path", 5, pathHandler);
 
+  ros::Subscriber subGoal = nh.subscribe<geometry_msgs::PointStamped> ("/way_point", 5, goalHandler);
+
   ros::Subscriber subJoystick = nh.subscribe<sensor_msgs::Joy> ("/joy", 5, joystickHandler);
 
   ros::Subscriber subSpeed = nh.subscribe<std_msgs::Float32> ("/speed", 5, speedHandler);
@@ -272,9 +296,8 @@ int main(int argc, char** argv)
   ros::Subscriber subTwoWayDrive = nh.subscribe<std_msgs::Bool> ("/two_way_drive", 5, twoWayDriveHandler);
 
   ros::Publisher pubSpeed = nh.advertise<geometry_msgs::Twist> ("/cmd_vel", 5);
-  ros::Publisher pubGoalReached = nh.advertise<std_msgs::Bool> ("/goal_reached", 1, true);
+  ros::Publisher pubGoalReached = nh.advertise<std_msgs::Bool> ("/goal_reached", 1, false);
   geometry_msgs::Twist cmd_vel;
-  std_msgs::Bool goalReached;
 
   if (autonomyMode) {
     joySpeed = autonomySpeed / maxSpeed;
@@ -287,6 +310,18 @@ int main(int argc, char** argv)
   bool status = ros::ok();
   while (status) {
     ros::spinOnce();
+
+    if (odomReceived && goalReceived && !goalReachedPublished) {
+      double goalDisX = goalX - vehicleX;
+      double goalDisY = goalY - vehicleY;
+      double goalDis = sqrt(goalDisX * goalDisX + goalDisY * goalDisY);
+      if (goalDis <= stopDisThre) {
+        std_msgs::Bool goalReached;
+        goalReached.data = true;
+        pubGoalReached.publish(goalReached);
+        goalReachedPublished = true;
+      }
+    }
 
     if (pathInit) {
       // 将当前车辆位置变换到接收路径时的参考系，无需要求路径采用全局表示。
@@ -316,9 +351,6 @@ int main(int argc, char** argv)
       disX = path.poses[pathPointID].pose.position.x - vehicleXRel;
       disY = path.poses[pathPointID].pose.position.y - vehicleYRel;
       dis = sqrt(disX * disX + disY * disY);
-
-      // 车辆跟踪到最后一个路径点，且距离终点小于停车阈值时发布 true，否则发布 false
-      goalReached.data = pathPointID == pathSize - 1 && endDis <= stopDisThre;
       float pathDir = atan2(disY, disX);
 
       float dirDiff = vehicleYaw - vehicleYawRec - pathDir;
@@ -397,7 +429,6 @@ int main(int argc, char** argv)
         else cmd_vel.linear.x = vehicleSpeed;
         cmd_vel.angular.z = vehicleYawRate;
         pubSpeed.publish(cmd_vel);
-        pubGoalReached.publish(goalReached);
 
         pubSkipCount = pubSkipNum;
       }

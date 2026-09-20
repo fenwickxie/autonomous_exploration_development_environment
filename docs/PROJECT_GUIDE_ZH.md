@@ -179,6 +179,7 @@ rosrun rqt_reconfigure rqt_reconfigure
 | `/check_obstacle` | `std_msgs/Bool` | 启用或关闭规划器碰撞检查。 |
 | `/two_way_drive` | `std_msgs/Bool` | 允许或禁止倒车。 |
 | `/stop` | `std_msgs/Int8` | `1` 停止线速度，`2` 同时停止转向。 |
+| `/goal_reached` | `std_msgs/Bool` | 到达全局 `/way_point` 的非锁存事件；每个不同目标首次进入 `stopDisThre` 半径时仅发布一次 `true`。 |
 | `/joy` | `sensor_msgs/Joy` | 手柄输入，同时影响手动/自主模式、速度、方向和地图清理。 |
 | `/map_clearing` | `std_msgs/Float32` | 清理基础地形图一定半径内的数据。 |
 | `/cloud_clearing` | `std_msgs/Float32` | 清理扩展地形图一定半径内的数据。 |
@@ -509,6 +510,7 @@ vehicleZ = /state_estimation.pose.pose.position.z
 - `slowRate1`、`slowRate2`、`slowTime1`、`slowTime2`：坡度变化事件后的两阶段速度比例和持续时间。第一阶段应更保守，第二阶段用于平滑恢复。
 - `useInclToStop`、`inclThre`、`stopTime`：姿态绝对 roll/pitch 超过阈值时停车一段时间。阈值过低会误停，过高会失去保护。
 - `/stop`：外部最高优先级安全覆盖。值 1 停止平移，值 2 同时停止旋转；测试真实底盘时应确认命令超时也会归零。
+- `/goal_reached`：以 `map` 坐标系下车辆位置到当前 `/way_point` 的水平距离为判据。距离首次不大于 `stopDisThre` 时发布一次 `true`；该话题不锁存，也不周期发布 `false`，消费者必须提前订阅。相同坐标的重复目标消息不会重新触发，坐标发生变化后才开始下一次到达检测。
 
 #### 当前 pathFollower 默认值解读
 
