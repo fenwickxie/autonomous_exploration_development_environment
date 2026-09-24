@@ -51,7 +51,7 @@ def main():
     # %% generate path
     dis = 1.5
     # 修改路径距离后，Ackermann 底盘使用 13 度转弯幅度，路径总弧长为 3*dis=6 m。
-    angle = 13.0
+    angle = 40.0
     delta_angle = angle / 3.0
     scale = 0.65
 

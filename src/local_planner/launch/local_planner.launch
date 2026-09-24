@@ -83,10 +83,10 @@
     <!-- 转向倒车时间阈值 -->
     <param name="switchTimeThre" type="double" value="1.8" />
     <!-- 方向差异阈值 -->
-    <param name="dirDiffThre" type="double" value="0.5" />
+    <param name="dirDiffThre" type="double" value="0.4" />
     <param name="stopDisThre" type="double" value="0.2" />
     <!-- 减速距离值域 -->
-    <param name="slowDwnDisThre" type="double" value="2.0" />
+    <param name="slowDwnDisThre" type="double" value="3.0" />
 
     <!-- 启用坡度 -->
     <param name="useInclRateToSlow" type="bool" value="false" />
