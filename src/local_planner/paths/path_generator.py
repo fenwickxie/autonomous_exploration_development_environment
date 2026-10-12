@@ -49,9 +49,10 @@ def write_ply(filename, data, props):
 
 def main():
     # %% generate path
-    dis = 1.5
-    # 修改路径距离后，Ackermann 底盘使用 13 度转弯幅度，路径总弧长为 3*dis=6 m。
-    angle = 18
+    dis = 1.5 # dis表示的是
+    # Ackermann: L=0.55 m、delta_max=30 度、minPathScale=0.9 时，36 度
+    # 使代表路径最紧半径缩放后仍比底盘最小转弯半径大约 13%。
+    angle = 36
     delta_angle = angle / 3.0
     scale = 0.65
 
@@ -158,9 +159,9 @@ def main():
     # %% find correspondence
     voxel_size = 0.02
     search_radius = 0.55
-    offset_x = 6.2
+    offset_x = 5.0
     offset_y = 4.5
-    voxel_num_x = 311
+    voxel_num_x = 251
     voxel_num_y = 451
 
     print("\nPreparing voxels")

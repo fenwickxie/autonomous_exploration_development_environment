@@ -379,22 +379,18 @@ vehicleZ = /state_estimation.pose.pose.position.z
 
 这四个量共同定义了 `correspondences.txt` 那张"体素→受阻路径列表"倒排表的网格，是让在线规划避免逐路径逐点做几何碰撞检测的关键：
 
-- **网格覆盖的物理范围**：`gridVoxelOffsetX=6.2 m` 是从车辆参考点向前的单侧范围，$x\in[0,6.2]$；`gridVoxelOffsetY=4.5 m` 是横向半范围，$y\in[-4.5,4.5]$。`gridVoxelSize=0.02 m` 是分辨率，因此格子数必须分别满足 $N_x=6.2/0.02+1=311$ 与 $N_y=(2\times4.5)/0.02+1=451$。此前将 $4.5/0.02+1$ 误写为 451 是错误的：横向是双侧范围，必须乘 2。`gridVoxelNumX/Y` 是 `localPlanner.cpp` 的编译期常量，`gridVoxelOffsetX/Y`、`gridVoxelSize` 是启动参数；它们必须与生成器同时修改，不能独立改动。
-- **`x`/`y` 的非对称含义**：`gridVoxelOffsetX` 覆盖车辆前方的路径长度，必须大于候选路径最大的前向投影；`gridVoxelOffsetY` 覆盖左右两侧的路径和车辆扫掠空间。当前 `dis=2.0` 时路径总弧长为 $3\times dis=6.0\,\text{m}$、最大前向投影约为 6.0 m，因此选择 `offsetX=6.2 m` 留出 0.2 m 余量。新路径的最大横向偏移约为 1.50 m，原有 `offsetY=4.5 m` 已足够，不应改为 8.5 m。
+- **网格覆盖的物理范围**：当前 `gridVoxelOffsetX=5.0 m` 是从车辆参考点向前的单侧范围，$x\in[0,5.0]$；`gridVoxelOffsetY=4.5 m` 是横向半范围，$y\in[-4.5,4.5]$。`gridVoxelSize=0.02 m` 是分辨率，因此格子数满足 $N_x=5.0/0.02+1=251$ 与 $N_y=(2\times4.5)/0.02+1=451$。`gridVoxelNumX/Y` 是 `localPlanner.cpp` 的编译期常量，`gridVoxelOffsetX/Y`、`gridVoxelSize` 是启动参数；它们必须与生成器同时修改，不能独立改动。
+- **`x`/`y` 的非对称含义**：`gridVoxelOffsetX` 覆盖车辆前方的碰撞查询范围，`gridVoxelOffsetY` 覆盖左右两侧。当前 `dis=1.5`，路径参数总长为 $3\times dis=4.5\,m$，使用 `offsetX=5.0 m` 留有查询余量；横向偏移范围由路径航向和 `angle` 共同决定，须确认不超出 `offsetY=4.5 m`。
 - **网格不是笛卡尔矩形网格，而是从近处向远处展开的扇形网格**：`scaleY = x/gridVoxelOffsetX + searchRadius/gridVoxelOffsetY*(gridVoxelOffsetX-x)/gridVoxelOffsetX`。当 $x=0$（车辆附近）时，`scaleY=searchRadius/offsetY`，横向覆盖约为 $\pm searchRadius=\pm0.55\,\text{m}$；当 $x=offsetX$（路径远端）时，`scaleY=1`，横向覆盖为完整的 $\pm4.5\,\text{m}$。这样把近车区域收紧到车辆扫掠宽度附近，而为远处绕障提供更宽横向范围。
 - **`correspondences.txt` 的生成方式**：`path_generator.py` 用 `cKDTree` 对全部 343 条曲线的采样点建索引，再对网格里每一个 `(x, y)` 格心坐标做 `query_ball_point(point, search_radius)` 查询，把半径 `search_radius=0.55 m` 内命中的路径 ID（去重后按顺序）写成该格子的一行。`localPlanner.cpp` 在线只需把障碍点变换、旋转、除以 `pathScale` 后算出 `(indX, indY)`，直接查这一行拿到"被这个障碍阻塞的路径列表"并计数，不需要对 343 条路径逐条做距离计算——这是本规划器"离线生成轨迹库，在线快速筛选"的核心加速手段。
 
-**将 `dis` 从 1.0 m 加长为 2.0 m 后，网格参数必须成套调整**
+**当前 `dis` 与碰撞网格配置**
 
-不需要。原因：
-
-- `dis` 是每段路径长度，三段路径的总弧长从 $3\times1=3\,\text{m}$ 变为 $3\times2=6\,\text{m}$。这会让规划器的单次输出路径更长、提前量更大，但障碍物的有效碰撞检查范围也必须覆盖到新的路径末端。
-- 保持 `gridVoxelSize=0.02 m` 时，前向范围从 `3.2 m` 增至 `6.2 m`，故 `gridVoxelNumX` 必须从 `161` 改为 $6.2/0.02+1=311$。`gridVoxelOffsetY=4.5 m` 和 `gridVoxelNumY=451` 不变，因为该值已覆盖新曲线约 $\pm1.50 m$ 的横向最大偏移，并保留足够绕障余量。
-- 已同步更新 `path_generator.py` 中的 `offset_x=6.2`、`voxel_num_x=311`，`localPlanner.cpp` 中的 `gridVoxelOffsetX=6.2`、`gridVoxelNumX=311`，以及 launch 中对应参数。必须重新生成四个路径库文件；否则运行时会用新网格索引查询旧倒排表，碰撞判定不可信。
+当前 `dis=1.5 m`，路径参数总长为 $3\times1.5=4.5\,m$；生成器、launch 和 `localPlanner.cpp` 使用一致的 `gridVoxelOffsetX=5.0 m`、`gridVoxelNumX=251`、`gridVoxelSize=0.02 m`。前向网格比路径参数长度多留 `0.5 m`，但仍应以路径实际前向投影验证覆盖范围。匹配该网格的 `correspondences.txt` 必须含 $251\times451=113201$ 行。当前工作区里的对应表有 `140261` 行，与源码配置不匹配；在确认并重新生成对应表前，不应把它视为当前有效路径库数据。
 
 **什么情况下才需要修改这几个网格参数（以及连带的编译期常量）**
 
-- 如果之后再次增大 `dis`，使 $3\times dis$ 接近或超过当前 `gridVoxelOffsetX=6.2 m`，则必须同步增大 `gridVoxelOffsetX`（和/或 `gridVoxelSize`），并相应修改 `localPlanner.cpp` 里 `gridVoxelNumX=311` 为新的 $\text{Offset}/\text{Size}+1$，重新编译 `local_planner` 包，再重新生成四个路径文件——启动参数、`path_generator.py`、C++ 编译期常量、重新生成的数据文件必须同时改。
+- 如果之后增大 `dis`，使路径的前向投影接近或超过当前 `gridVoxelOffsetX=5.0 m`，则必须同步调整生成器、launch 和 `localPlanner.cpp` 里的网格范围/尺寸，重新编译 `local_planner` 包，再重新生成路径文件和 `correspondences.txt`。不能仅依据 $3\times dis$ 判断是否越界，应检查路径的实际前向投影。
 - 如果修改 `vehicleLength/Width` 或 `searchRadius`（车辆包络、离线碰撞查询半径），也需要重新生成 `correspondences.txt`，因为 `search_radius` 直接决定了每个格子查询命中哪些路径；但只改这类参数通常不需要改 `gridVoxelOffsetX/Y`、`gridVoxelNumX/Y`（除非同时也改了 `dis`）。
 - 简言之：`dis` 决定是否需要碰网格覆盖范围这条硬约束；`angle`/`scale` 只影响曲率，不影响是否需要改网格参数。
 
@@ -427,9 +423,11 @@ vehicleZ = /state_estimation.pose.pose.position.z
 - `adjacentRange=4.25`、`pathRangeBySpeed=true`、`minPathRange=1.0`：感知范围较大，但低速时实际检查范围至少保持 1 m。
 - `obstacleHeightThre=0.15`、`pointPerPathThre=2`：对超过 15 cm 的 terrain 高差较敏感，同时允许路径命中少量点。
 - `useCost=false`：当前主要采用硬碰撞筛选，低矮地形代价不会改变路径选择；需要偏好平缓路线时再开启。
-- `pathScale=1.25`、`minPathScale=0.75`、`pathScaleBySpeed=true`：路径长度会随速度缩放，找不到路径时最多缩到 0.75 倍。
+- `dirThre=45°`、`dirToVehicle=true`：方向筛选阈值为 45 度，并按车辆方向约束候选旋转方向。
+- `pathScale=1.25`、`minPathScale=0.9`、`pathScaleBySpeed=true`：路径长度会随速度缩放，规划搜索失败时最小缩放为 0.9；Ackermann 曲率约束也必须按该最小尺度校核。
 - `pathCropByGoal=true`、`goalClearRange=0.5`：接近目标时减少目标后方无关障碍的影响。
-- `noPathReverse=true`、`twoWayDrive=false`：默认只规划前进路径；若实车支持倒车，需要同时修改两个节点的配置并验证方向符号。
+- `noPathReverse=true`、`twoWayDrive=true`：当前允许双向行驶设置，但正向无路时不自动尝试反向路径；若底盘不支持倒车，应把 launch 参数 `twoWayDrive` 设为 `false`，并确认跟踪器设置一致。
+- `autonomyMode=true`、`autonomySpeed=0.05 m/s`、`maxSpeed=1.0 m/s`：启动自主模式并以低速巡航；实车速度仍应结合路面附着和制动距离验证。
 
 #### 推荐调参流程和典型现象
 
@@ -474,18 +472,18 @@ vehicleZ = /state_estimation.pose.pose.position.z
 
 - `/cmd_vel.linear.x`：前进为正、倒车为负，单位 m/s。
 - `/cmd_vel.angular.z`：偏航角速度，单位 rad/s；launch 中 `maxYawRate` 以度/秒配置，代码在输出时转换为弧度/秒。`yawRateGain` 和 `stopYawRateGain` 是航向误差增益，本身不是角度单位。
-- 控制循环为 100 Hz，因此 `maxAccel=2.5` 表示每周期最多改变约 `0.025 m/s`，不是一次性把速度改变 2.5 m/s。
+- 控制循环为 100 Hz；当前 launch 的 `maxAccel=0.1 m/s^2`，因此每周期最多改变约 `0.001 m/s`，不是一次性改变 `0.1 m/s`。
 - `/path` 的 `frame_id` 应为 `vehicle`，并且路径点应与规划器发布时的参考姿态一致。若把全局 `map` 路径误发给跟踪器，车辆会产生明显方向错误。
 
 #### pathFollower 参数调节
 
 **前视和转向**
 
-- `lookAheadDis`：前视距离。增大能让运动更平滑、减少左右摆动，但转弯切入变晚；减小反应更快，但容易抖动。低速或狭窄环境先从 `0.4~0.6 m` 试起。
+- `lookAheadDis`：前视距离。增大能让运动更平滑、减少左右摆动，但转弯切入变晚；减小反应更快，但容易抖动。当前启动值为 `1.5 m`，应结合实车轨迹逐步调整。
 - `yawRateGain`：正常行驶的航向误差增益。增大转向更积极，过大会振荡；减小更平滑但可能跟不上弯道。
-- `stopYawRateGain`：接近静止时原地对准方向的增益。若车辆停车转向慢可增大，若原地抖动则减小。
+- `stopYawRateGain`：低速区间使用的航向误差增益。Ackermann 车辆不能原地旋转，不能靠增大该值实现静止对准。
 - `maxYawRate`：角速度上限。应符合底盘能力和安全要求；过小会导致弯道跟不上，过大可能造成急转。
-- `dirDiffThre`：允许加速的方向误差阈值。误差超过它时控制器减速，单位为弧度；launch 中 `3.14` 基本等于允许较大误差，若希望转弯更稳可减小。
+- `dirDiffThre`：允许加速的方向误差阈值。误差超过它时控制器减速，单位为弧度；当前 launch 值为 `0.5 rad`。
 
 **速度和路径末端**
 
@@ -499,7 +497,7 @@ vehicleZ = /state_estimation.pose.pose.position.z
 
 - `twoWayDrive`：是否允许倒车。必须与 localPlanner 的 `twoWayDrive`、`noPathReverse` 以及真实底盘负速度能力一致。
 - `switchTimeThre`：前进/倒车方向切换的最短间隔。增大可防止振荡，减小可提高方向切换响应。
-- `noRotAtStop`：手动零速时是否禁止原地转向。开启更安全；需要手动调头时关闭。
+- `noRotAtStop`：手动零速时是否禁止原地转向。Ackermann 底盘应保持开启；调头应通过可行路径行驶完成，不能依赖原地转向。
 - `noRotAtGoal`：到达目标时是否禁止继续转向。开启可避免目标点附近原地旋转。
 - `autonomyMode`、`autonomySpeed`：启动时的自主模式和目标速度。`/joy` 可以切换人工/自主，`/speed` 只有在手柄一段时间未操作且处于自主模式时才会接管速度。
 - `joyToSpeedDelay`：手柄停止操作后，自主速度命令可以生效前的等待时间。增大更防止模式抢占，减小更快恢复自主控制。
@@ -512,16 +510,17 @@ vehicleZ = /state_estimation.pose.pose.position.z
 - `/stop`：外部最高优先级安全覆盖。值 1 停止平移，值 2 同时停止旋转；测试真实底盘时应确认命令超时也会归零。
 - `/goal_reached`：以 `map` 坐标系下车辆位置到当前 `/way_point` 的水平距离为判据。距离首次不大于 `stopDisThre` 时发布一次 `true`；该话题不锁存，也不周期发布 `false`，消费者必须提前订阅。相同坐标的重复目标消息不会重新触发，坐标发生变化后才开始下一次到达检测。
 
-#### 当前 pathFollower 默认值解读
+#### 当前 pathFollower 启动配置
 
-当前 launch 中：
+以下是 `local_planner.launch` 明确传给跟踪器的值；`pathFollower.cpp` 中的全局变量初值只是未传参时的回退值，不应与启动配置混为一谈：
 
-- `lookAheadDis=0.5`、`yawRateGain=7.5`、`maxYawRate=42`：`maxYawRate` 已按 Ackermann 转向几何换算（见下文"Ackermann 转向底盘的偏航参数换算"），不是任意设定的响应速度。
-- `maxSpeed=1.0`、`autonomySpeed=0.5`：自主速度最终会被 `maxSpeed` 限制；应注意 `autonomySpeed` 大于 `maxSpeed` 时会被归一化为 1。
-- `maxAccel=2.5`：100 Hz 下速度变化很快，低速仿真通常可接受；实车应根据轮胎、地面和制动距离重新评估。
-- `slowDwnDisThre=1.0`、`stopDisThre=0.2`：接近路径终点会较早减速，并在 0.2 m 范围内停止。
-- `useInclRateToSlow=false`、`useInclToStop=false`：默认关闭坡度保护，实机上应先确认里程计角度和角速度含义，再决定是否启用。
-- `noRotAtStop=true`、`noRotAtGoal=true`：默认不在停车或到达目标后继续旋转，行为更保守。
+- `lookAheadDis=1.5 m`，`yawRateGain=2.0`，`stopYawRateGain=2.0`：控制响应参数，需在安全场地低速验证，不由 Ackermann 几何公式直接决定。
+- `maxSpeed=1.0 m/s`，`autonomySpeed=0.05 m/s`，`maxAccel=0.1 m/s^2`：当前自主速度较低；100 Hz 下加速度限制对应每周期最多约 `0.001 m/s` 的速度变化。
+- `maxYawRate=54°/s`：按 $L=0.55\,m$、$\delta_{max}=30^\circ$、`maxSpeed=1.0 m/s` 及 0.9 安全系数计算，并由跟踪器按当前线速度比例进一步限幅。
+- `switchTimeThre=1.8 s`、`dirDiffThre=0.5 rad`：分别控制前进/倒车切换间隔和允许加速的方向误差。
+- `slowDwnDisThre=2.0 m`、`stopDisThre=0.2 m`：路径末端减速距离与停车距离。
+- `noRotAtStop=true`、`noRotAtGoal=true`：禁止停车和到达目标后继续发出转向角速度。
+- `useInclRateToSlow=false`、`useInclToStop=false`：当前关闭姿态变化减速和倾角停车功能。
 
 #### 推荐调参流程和典型现象
 
@@ -547,208 +546,36 @@ vehicleZ = /state_estimation.pose.pose.position.z
 
 #### Ackermann 转向底盘的偏航参数换算
 
-`pathFollower` 的 `yawRateGain`/`stopYawRateGain`/`maxYawRate` 默认假设差速/全向底盘：车辆在任意速度（包括 $v=0$）都能达到任意偏航角速度。Ackermann 底盘不满足这个假设——偏航角速度与线速度通过转向角和轴距耦合：
+Ackermann 底盘的偏航角速度受线速度、前轮转角和轴距共同约束：
 
-$$\omega = \frac{v \cdot \tan(\delta)}{L}$$
+$$\omega=\frac{v\tan(\delta)}{L},\qquad R=\frac{L}{|\tan(\delta)|}$$
 
-其中 $L$ 为轴距，$\delta$ 为前轮转向角，$\delta_{max}$ 为机械最大转向角。由上式可知 $v=0$ 时 $\omega=0$，Ackermann 底盘物理上无法原地转向。
+以当前假设 $L=0.55\,m$、$\delta_{max}=30^\circ$ 计算，底盘最小转弯半径为 $R_{min}=0.55/\tan(30^\circ)\approx0.953\,m$。轴距须以实车测量值确认，若实际最大前轮角定义不同，也应重新计算。
 
-**`maxYawRate` 的计算**：取车辆最大速度 $v_{max}$（即 launch 中的 `maxSpeed`）下、转向打满时能达到的偏航角速度，作为绝不应超过的硬上限：
+`maxYawRate` 按 $v_{max}\tan(\delta_{max})/L$ 计算，再乘 0.9 安全系数。当前 `maxSpeed=1.0 m/s` 时理论上限约 $60.1^\circ/s$，launch 设置 `maxYawRate=54.0 deg/s`。`pathFollower` 还会按 $|linear.x|/maxSpeed$ 缩小角速度上限；底盘驱动节点仍须将 `/cmd_vel` 转成转向命令、限幅机械转角，并实现命令超时停车。
 
-$$\omega_{max} = \frac{v_{max}\cdot\tan(\delta_{max})}{L}$$
+Ackermann 车辆不能原地改变航向。当前 `checkRotObstacle=false`、`noRotAtStop=true`、`noRotAtGoal=true` 与这一约束一致；低速增益 `yawRateGain` 和 `stopYawRateGain` 只影响跟踪响应，需在安全场地试调，不能替代路径曲率和底盘转角约束。
 
-例如轴距 $L=0.55\,\text{m}$、$\delta_{max}=0.45\,\text{rad}$、`maxSpeed=1.0 m/s` 时：
+##### 为什么 `path_generator.py` 使用 `angle=36`
 
-$$\omega_{max} = \frac{1.0\times\tan(0.45)}{0.55}\approx 0.878\ \text{rad/s}\approx 50.3°/\text{s}$$
+当前路径生成参数为 `dis=1.5 m`、`scale=0.65`、`angle=36°`。`localPlanner` 最终发布 `startPaths.ply` 中 7 条代表路径之一。首段只有起点和终点两个航向控制点，生成器对其线性插值；首段极限曲线的最小半径为：
 
-实际填入 `maxYawRate` 时应再乘以安全系数（建议 0.85~0.9），避免频繁打到转向机械死点；本项目当前配置取 `45.0°/s`。
+$$R_{lib}=\frac{dis}{2\,angle_{rad}}$$
 
-**`yawRateGain`/`stopYawRateGain` 的建议**：Ackermann 底盘无法在静止或低速时快速对准方向，因此 `stopYawRateGain` 不应像差速底盘那样调大做“原地快速纠偏”，建议与 `yawRateGain` 取相近或更小的值。真正的可行性约束不应该只压在这两个增益上。
+规划器允许最小路径尺度 `minPathScale=0.9`，因此最紧弯按 $0.9R_{lib}$ 校核。若把至少 10% 作为设计余量，要求 $0.9R_{lib}\ge1.10R_{min}$：
 
-**必须配套的下游节点**：车速会低于 `maxSpeed`（例如巡航速度 `autonomySpeed`），仅用 `maxYawRate` 这一个常量无法保证任意时刻的角速度请求都物理可行。必须在 `/cmd_vel` 到 Ackermann 底盘协议之间增加一个转换节点，实时按当前线速度把请求的角速度换算成转向角并限幅：
+| `angle` | $R_{lib}$ | 缩放后半径 | 相对 $R_{min}=0.953 m$ 的余量 |
+| ---: | ---: | ---: | ---: |
+| 36° | 1.194 m | 1.074 m | 约 12.7% |
+| 37° | 1.161 m | 1.045 m | 约 9.7% |
 
-$$\delta = \operatorname{atan2}(\omega \cdot L,\ v),\qquad \delta \in [-\delta_{max}, \delta_{max}]$$
+所以在该余量标准下，36° 是最大整度角。它不是底盘机械转角，也不是从 30° 直接换算得到；角度再大，最小路径半径就会降低。该 10% 是几何设计余量，不涵盖轮胎侧滑、转向间隙、路面附着和跟踪误差。
 
-这个转换节点才是真正保证任意速度下转向可行性的地方；`pathFollower` 的三个偏航参数只需保证在最高速度下的请求是合理的。
+该结论只针对实际发布的代表路径首段。`paths.ply` 的 343 条完整曲线用于候选碰撞关联和评分，末端还有相距 1 mm 的航向约束点；如果将来改为发布完整曲线，须对新的实际输出路径重新测量全程曲率并检查末端构造。
 
-#### 除偏航参数外，Ackermann 底盘还需要检查和调整的参数
+##### 调整与实车验证
 
-`maxYawRate`/`yawRateGain`/`stopYawRateGain` 只解决了"角速度请求是否越过物理极限"这一层问题。下面这些参数即使数值上没有报错，也会因为 Ackermann 无法原地转向、且转弯半径存在下限而在实车上表现出绕圈、蹭障碍物、画龙或直接跟丢路径，必须逐项检查。
-
-**① `localPlanner` 候选路径库的曲率必须不小于最小转弯半径**
-
-`path_generator.py` 生成的 343 条候选曲线在设计时假设车辆可以走出任意曲率的弧线，包括小半径急转。Ackermann 底盘存在硬性的最小转弯半径：
-
-$$R_{min} = \frac{L}{\tan(\delta_{max})}=\frac{0.55}{\tan(0.45)}\approx 1.14m$$
-
-**`angle` 参数**：在 `path_generator.py` 中，`dis`、`angle`、`scale` 三个变量共同定义了 343 条候选曲线的"形状"。生成逻辑是三段式的：
-
-- 第一段（长度 `dis`）从车头出发，终点朝向偏离车辆当前朝向 `shift1` 度，`shift1` 在 `[-angle, angle]` 之间按 `delta_angle=angle/3` 取 7 个值（对应 7 个 `groupID`，即 `localPlanner.cpp` 里硬编码的 `groupNum=7`）。
-- 第二段（长度 `dis`，累计到 `2*dis`）终点朝向再偏离 `shift1` 最多 `angle*scale` 度，同样取 7 个值。
-- 第三段（长度 `dis`，累计到 `3*dis`）终点朝向再偏离 `shift2` 最多 `angle*scale²` 度，同样取 7 个值。
-
-三段各 7 种取值组合共 $7\times7\times7=343$ 条曲线（`pathNum=343`），再用样条把这些折线光滑成弧线。因此 **`angle` 本质上是"候选曲线在每一段路程上允许偏转的最大角度"，直接决定了曲线的转弯幅度和曲率**：`angle` 越大，路径库里出现的转弯越急（曲率半径越小），路径覆盖的总朝向范围也越宽；`angle` 越小，路径越接近直线，覆盖的朝向范围越窄，但每条路径能被 Ackermann 底盘实际执行的把握越大。`scale=0.65` 让后两段的偏转幅度依次收窄，使曲线呈现"先大转、后微调"的锥形收敛效果，这个值本次未改动。
-
-**`dis` 改为 2.0 m 后，`angle` 还要不要改**：需要重新校核，但不应仅凭旧的 `angle=7.0` 结论直接再改一次。若生成器的控制点坐标严格按同一比例 $k=dis_{new}/dis_{old}$ 缩放，路径参数化可写为 $P_{new}(u)=kP_{old}(u)$。曲率定义为：
-
-$$\kappa(u)=\frac{|x'(u)y''(u)-y'(u)x''(u)|}{(x'(u)^2+y'(u)^2)^{3/2}},\qquad R(u)=\frac{1}{\kappa(u)}$$
-
-代入 $P_{new}=kP_{old}$ 后有 $P'_{new}=kP'_{old}$、$P''_{new}=kP''_{old}$，因此 $\kappa_{new}=\kappa_{old}/k$、$R_{new}=kR_{old}$。这解释了为什么增大 `dis` 通常会增大转弯半径。但本生成器在末端使用 `3*dis-0.001` 和 `3*dis` 两个相距固定 1 mm 的锚点固定朝向，该 1 mm 间隔不会随 `dis` 等比放大，所以这只是近似关系，不能直接用 $2\times1.30=2.60$ 当作最终测量结果。
-
-对实际生成的全部 343 条路径按三点外接圆法全量测量，`dis=2.0`、`angle=7.0`、`scale=0.65` 的结果为：
-
-$$R_{lib}=2.294\,\text{m}$$
-
-规划器还会在运行时乘以 `pathScale`；最小可执行半径不是 $R_{lib}$，而是：
-
-$$R_{actual,min}=minPathScale\times R_{lib}(dis, angle, scale)$$
-
-当前 `minPathScale=0.9` 时，`angle=7.0` 的最坏情况为 $0.9\times2.294=2.065\,\text{m}$，明显大于底盘 $R_{min}=1.14\,\text{m}$。因此 `dis=2.0`、`angle=7.0`、`scale=0.65` 是**保守且可执行**的配置，但候选路径会比底盘能力允许的更平缓，绕障方向覆盖会减少。
-
-这几个参数的耦合关系如下：
-
-- `dis` 增大：路径总长 $3\times dis$ 与曲率半径均近似同比增大；但必须同步扩展碰撞网格 `gridVoxelOffsetX`、`gridVoxelNumX` 并重建 `correspondences.txt`。
-- `angle` 增大：每段允许偏转更大，曲率半径减小、绕障能力增强；必须重新生成路径并重新计算 $R_{lib}$。
-- `scale` 增大：后两段保留更多转向幅度，通常使部分路径更急；减小则让路径更快趋直。改变后同样必须重新计算 $R_{lib}$。
-- `pathScale`、`minPathScale` 增大：运行时整体放大路径，曲率半径同比增大；减小则使路径更短、更急。它们不需要重建路径库，但必须满足 $minPathScale\times R_{lib}\ge R_{min}$。
-
-若希望在 `dis=2.0` 下恢复更多转弯能力，可以提高 `angle`，但每一档都必须重新生成四个路径文件，并以 $minPathScale\times R_{lib}\ge1.14\,\text{m}$ 为硬约束；若按 10%~20% 工程余量，建议目标为 $minPathScale\times R_{lib}\ge1.30\sim1.37\,\text{m}$。在 `minPathScale=0.9` 下，对应路径库自身应至少达到 $R_{lib}\ge1.45\sim1.52\,\text{m}$。
-
-本项目已对 `dis=2.0`、`scale=0.65` 的全部 343 条路径完成扫描，结果如下：
-
-| `angle`（度） | $R_{lib}$（m） | $0.9\times R_{lib}$（m） | 结论 |
-| --- | ---: | ---: | --- |
-| 7 | 2.294 | 2.065 | 安全但过于保守 |
-| 10 | 1.610 | 1.449 | 安全，余量约 27% |
-| **11** | **1.465** | **1.318** | **推荐：余量约 16%，且尽可能保留绕障能力** |
-| 12 | 1.344 | 1.210 | 超过硬下限，但工程余量不足 |
-| 13 | 1.242 | 1.118 | 不满足硬下限 |
-| 14 | 1.155 | 1.039 | 不满足硬下限 |
-| 15 | 1.079 | 0.971 | 不满足硬下限，不能用于重建 |
-
-
-
-如果候选路径中某一段的曲率半径 $R_{path} < R_{min}$，即使 `pathFollower` 正确地把角速度请求换算成转向角，转向角也会被限幅在 $\delta_{max}$，导致车辆实际走出的弧线比路径更"直"，从而系统性地切内角、蹭到路径内侧的障碍物，且这个误差不会因为调高增益而消失，因为不是控制问题而是路径本身不可行。
-
-**曲率半径 $R_{lib}$ 计算**：`paths.ply` 里每条路径只有离散点（按弧长每 `0.01 m` 采样一次），没有现成的曲率公式，因此用"外接圆半径"这个纯几何量做近似估计，步骤如下：
-
-1. **按 `path_id` 分组**：`paths.ply` 的每一行是 `(x, y, z, path_id, group_id)`，先按 `path_id` 把 343 条路径的点分开，保证只在同一条路径内部计算曲率，不跨路径连接点。
-2. **等间隔抽稀（stride）**：原始点间隔只有 `0.01 m`（约 1 cm），相邻点几乎共线，直接用相邻三点算外接圆会被浮点误差和采样噪声主导，算出的半径毫无意义地忽大忽小。因此每隔 20 个点取一个（约 `20×0.01 m=0.2 m` 的弧长间隔）再计算，这个间隔远大于噪声尺度、又明显小于路径整体转弯的空间尺度，能相对稳定地反映路径的真实弯曲程度。
-3. **逐个三点窗口求外接圆半径**：对抽稀后的点序列 $P_1,P_2,\dots,P_n$，取每一个连续三点组 $(P_i,P_{i+1},P_{i+2})$，把它们看成一个三角形的三个顶点，边长分别为
-
-   $$a=|P_iP_{i+1}|,\quad b=|P_{i+1}P_{i+2}|,\quad c=|P_iP_{i+2}|$$
-
-   用海伦公式求三角形面积 $Area=\sqrt{s(s-a)(s-b)(s-c)}$（$s=(a+b+c)/2$ 为半周长），再用外接圆半径公式
-
-   $$R=\frac{abc}{4\cdot Area}$$
-
-   得到这三点处的局部曲率半径估计。三点越接近共线，$Area$ 越接近 0，$R$ 越大（对应曲率趋近于 0，即接近直线），这与"外接圆半径就是局部曲率半径的近似"这一几何事实一致；因此可以跳过 $Area$ 过小（视为共线/数值噪声，不计入统计）的窗口，避免除以接近 0 的数产生虚假的极大值或 NaN。
-4. **取最小值作为该路径的最紧弯半径**：对一条路径内所有三点窗口算出的 $R$ 取最小值，得到这条路径的最紧弯曲率半径；再对全部 342/343 条路径取最小值，得到整个路径库在 `pathScale=1` 时的最小曲率半径 $R_{lib}$。历史 `dis=1.0`、`angle=7.0` 路径库测得约 $1.30\,\text{m}$；当前 `dis=2.0` 时应以重新生成后的文件重新测量，不能把旧值直接当作当前测量值。
-5. **必要时校验是否为端点数值伪影**：由于每条曲线的末端用了两个几乎重合的控制点（`3*dis-0.001` 与 `3*dis`）来固定终点朝向，可能在路径末尾引入局部尖锐但不代表整体曲率的伪影；因此额外对比过"去掉末尾若干个采样点后再算一次最小值"，确认最紧弯半径不是仅由末端伪影决定的（本次结果在去掉末尾点前后一致，说明测得的最小曲率确实来自路径中段的真实几何形状，而不是末端拼接伪影）。
-
-这个方法本质上是一个**离散、近似**的曲率下界估计（依赖 stride 的选取），不是解析曲率公式；它的价值在于足够快速、且能对全部 343 条路径做批量、全量（非抽样）扫描，用来判断"路径库是否明显低于 $R_{min}$"这个数量级问题，比逐条路径手工检查更可靠。若要更严谨，可以改用样条的解析曲率公式 $\kappa=\dfrac{x'y''-y'x''}{(x'^2+y'^2)^{3/2}}$ 直接对 `path_generator.py` 里的 `CubicSpline` 结果求导计算，但对本次"数量级校核 + 选参数"的目的而言，离散外接圆估计已经足够。
-
-- **影响**：路径规划器认为无碰撞的路径，车辆实际执行时可能发生碰撞；越小的候选路径尺度（`pathScale` 越小、转弯越急的方向）风险越大。
-- **本仓库已实测并应用的结果**：对 `paths.ply` 做逐路径三点圆弧半径估计（每 0.2 m 采样一次，覆盖全部 343 条路径），发现原始曲线库（`path_generator.py` 中 `dis=1.0`、`angle=27.0`、`scale=0.65`）在 `pathScale=1` 时最小曲率半径仅约 $0.39\,\text{m}$，且 342 条路径中有 268 条（约 78%）的最紧弯曲率半径低于 $R_{min}=1.14\,\text{m}$，即绝大多数候选路径对本车而言并非物理可行。碰撞检测网格 `gridVoxelOffsetX=3.2\,\text{m}`（`localPlanner.cpp` 硬编码 `gridVoxelNumX=161`）要求路径总长 $3\times dis$ 不超过约 3.2 m，因此保持 `dis=1.0` 不变，只将 `angle` 从 `27.0` 收窄为 `7.0`（`scale=0.65` 不变），重新生成后最小曲率半径提升到约 $1.30\,\text{m}$（第 1 百分位约 $1.40\,\text{m}$、中位数约 $2.98\,\text{m}$），满足 $R_{min}=1.14\,\text{m}$ 并留有约 14% 的安全余量。仓库中的 `paths.ply`、`startPaths.ply`、`pathList.ply`、`correspondences.txt` 已按此配置重新生成。
-
-**历史上为何在 `dis=1.0` 时选 `7.0`**：以下扫描固定 `dis=1.0`、`scale=0.65`，用于说明旧短路径库的选择依据；它不能直接作为当前 `dis=2.0` 的最终 `angle` 结论：
-
-| `angle`（度） | 库内最小曲率半径 $R_{lib}$（约） | 相对 $R_{min}=1.14\text{m}$ |
-| --- | --- | --- |
-| 27.0（原始值） | 0.39 m | 远低于，78% 路径不可行 |
-| 10.0 | 0.92 m | 仍低于 |
-| 9.0 | 1.02 m | 仍低于 |
-| 8.0 | 1.14 m | 刚好持平，无安全余量 |
-| **7.0** | **1.30 m** | **高于，约 14% 余量** |
-| 6.5 | 1.40 m | 余量更大，但转弯范围更窄 |
-| 6.0 | 1.52 m | 余量更大，但转弯范围更窄 |
-
-选择依据：
-1. `angle=8.0` 恰好等于 $R_{min}$，没有任何余量——曲率估计本身是基于离散采样点的近似值，实车轮胎侧滑、转向间隙、里程计噪声都会侵蚀这点余量，实际使用时几乎必然出现部分路径不可行。
-2. `angle=7.0` 是在 `dis=1.0` 下能提供约 14% 安全余量的最大取值；路径越长后，该余量会变化，必须按上面的 $R_{actual,min}$ 公式重新验证。
-3. 当前已将 `dis` 增至 2.0 m，并配套将前向碰撞网格从 `3.2 m/161 格` 扩为 `6.2 m/311 格`，所以现在可以在不缩短路径的前提下，逐档上调 `angle` 以恢复绕障能力；每次上调后都需要重建和校核路径库。
-
-- **调整策略**：
-  1. 用底盘参数算出 $R_{min}$（本车为 $1.14\,\text{m}$）。
-  2. 用"逐路径三点圆弧半径"方法对 `paths.ply` 做一次全量（非抽样）检查，得到当前库在 `pathScale=1` 时的最小曲率半径 $R_{lib}$；若 $R_{lib} < R_{min}$，优先调小 `path_generator.py` 的 `angle`（保持 `dis` 不变，除非同时修改 `localPlanner.cpp` 里的 `gridVoxelOffsetX/NumX` 并重新编译），重新生成四个路径文件（见 8.4 节），再重复本步验证，直到 $R_{lib}$ 比 $R_{min}$ 留有 10%~20% 余量。
-  3. **重新生成后仍需按 $R_{lib}$ 校核 `minPathScale`**：只要 `minPathScale` $\times\ R_{lib} \ge R_{min}$ 即可保证最急路径也可行，即 $\text{minPathScale} \ge R_{min}/R_{lib}$。本车 $R_{lib}\approx1.30\,\text{m}$ 时下限约为 $0.875$，已将 `local_planner.launch` 的 `minPathScale` 由 `0.75` 调整为 `0.9`；`pathScale`（最高速时的尺度，`1.25`）无需改动，因为 $1.25\times1.30\approx1.63\,\text{m}$ 已明显大于 $R_{min}$。
-  4. 现场验证时，让车辆以 `autonomySpeed` 沿规划路径行驶，用 RViz 同时显示 `/path` 与真实里程计轨迹，检查两者在弯道处是否出现系统性偏差；出现偏差说明路径曲率仍超出车辆能力，应回到第 2 步进一步收窄 `angle` 或提高 `minPathScale`，而不是继续调 `pathFollower` 的增益。
-
-**② `checkRotObstacle` 建议关闭（Ackermann 无法做"原地扫一下再走"的动作）**
-
-`localPlanner` 的 `checkRotObstacle=true` 会检查车辆当前位置附近、旋转到某个方向时车体包络是否会碰到障碍物，这个检查隐含假设车辆可以先原地旋转对准方向、再直行。Ackermann 底盘不能原地转向，旋转必然伴随一段弧线运动，`checkRotObstacle` 排除的那些"方向"对 Ackermann 而言既不是它会真正执行的动作，也可能错误地排除掉本来可行的弧线方向。
-
-- **影响**：可能无谓地减少可选方向数量，在狭窄环境中让规划器更容易报告无路可走。
-- **调整策略**：Ackermann 底盘建议设为 `checkRotObstacle=false`，转而完全依赖曲率已经受限的候选路径本身做碰撞检查（即第①条）。
-
-**③ `noRotAtStop`、`noRotAtGoal` 必须为 `true`（这是物理约束，不是可选项）**
-
-这两个参数原本用于差速/全向底盘上"是否允许静止时用手柄原地转向"。对 Ackermann 而言，$v=0$ 时 $\omega$ 必然为 0（见 $\omega=v\tan\delta/L$），即使 `pathFollower` 计算出非零的 `angular.z`，转换节点也只能让前轮打角而车辆不会转动，此时若关闭这两个保护，会让转向舵机在车辆静止时反复打角摆动，加速舵机磨损且没有实际效果。
-
-- **调整策略**：两者始终保持 `true`；不要为了"更快对准方向"而关闭。真正需要的对准能力应通过①中路径曲率是否可行来保证，而不是原地转向。
-
-**④ `lookAheadDis` 需要与 $R_{min}$ 匹配，不能只按"平滑度"调**
-
-Pure-Pursuit 类前视控制器的一个经验关系是：前视距离过小时，要求的瞬时转弯半径 $R \approx L_d / (2\sin(\alpha))$（$\alpha$ 为车辆朝向与前视点方向夹角）可能小于 $R_{min}$，即前视点在车辆能走出的弧线范围之外，导致车辆持续贴着弧线外侧、无法真正到达前视点，看起来像是"跟丢"或转弯不够。
-
-- **调整策略**：以 $R_{min}$ 为下限估算 `lookAheadDis`，经验起点为
-
-  $$L_d \gtrsim R_{min}$$
-
-  即前视距离不应明显小于最小转弯半径；实际取值再结合速度做工程调整（速度越高，通常需要更大的前视距离以保证平顺）。若发现车辆转弯半径始终比路径要求的大（切外角），应先增大 `lookAheadDis` 而不是先调 `yawRateGain`。
-
-**⑤ `dirDiffThre` 与 `switchTimeThre` 需要更保守**
-
-`dirDiffThre` 决定方向误差多大时开始减速；差速底盘可以在原地快速纠偏后再加速，Ackermann 做不到，因此方向误差较大时如果仍然维持较高的目标速度，车辆会以过大的转弯半径冲出路径。`switchTimeThre` 控制前进/倒车切换的最短间隔，真实 Ackermann 换向通常需要转向机构回正、可能还有变速箱换挡的机械时间，仿真里瞬时切换在实车上不成立。
-
-- **调整策略**：
-  - `dirDiffThre` 建议比差速底盘默认值更小（如从 `3.14` 降到 `0.3~0.6 rad` 量级），让方向未对齐时更早减速，降低对转弯半径的需求。
-  - `switchTimeThre` 应按实测的转向回正 + 换挡耗时设置，通常需要比仿真默认的 `1.0 s`更长；具体数值应现场测量车辆从"打满一侧"回正并允许反向行驶所需时间。
-
-**⑥ `maxSpeed`、`maxAccel` 需要结合最小转弯半径和轮胎附着力校核，不能只按电机能力设置**
-
-车辆过弯时的向心加速度为 $a_{lat}=v^2/R$。如果按电机/减速比算出的 `maxSpeed` 在最小转弯半径 $R_{min}$ 处对应的向心加速度超过轮胎附着极限 $a_{lat,max}$（干燥沥青经验值约 $0.3\sim0.5\,g$，越野或湿滑路面应显著更低且需实测），车辆在急弯处会侧滑，实际路径曲率比指令更大，进一步放大①中的偏差。
-
-- **调整策略**：用下式反推速度上限，并取比该值更保守的 `maxSpeed`：
-
-  $$v_{max} \le \sqrt{a_{lat,max}\cdot R_{min}}$$
-
-  `maxAccel` 应保证车辆在 100 Hz 控制周期内不会因加速过快而在弯道入口处速度仍然过高；建议先用直线加速测出实际可达到的线加速度，再取不超过实测值的保守值,而不是直接沿用仿真默认的 `2.5`。
-
-#### 按底盘参数推荐的 Ackermann 相关参数取值
-
-以轴距 $L$、最大转向角 $\delta_{max}$、目标最大速度需求 $v_{req}$、轮胎/路面允许的最大向心加速度 $a_{lat,max}$ 为输入，推荐的计算顺序和取值如下：
-
-1. **最小转弯半径**：$R_{min} = L / \tan(\delta_{max})$。
-2. **`maxSpeed`**：取 $\min\big(v_{req},\ \sqrt{a_{lat,max}\cdot R_{min}}\big)$ 再乘以 0.8~0.9 的安全系数。
-3. **`maxYawRate`**（度/秒）：$\dfrac{v_{max}\tan(\delta_{max})}{L}\times\dfrac{180}{\pi}\times(0.85\sim0.9)$。
-4. **`lookAheadDis`**：不小于 $R_{min}$，实车可从 $1.0\sim1.5\,R_{min}$ 开始试调。
-5. **`yawRateGain` / `stopYawRateGain`**：两者取相近或 `stopYawRateGain` 略小；具体数值仍需现场从小到大试调直到不振荡，不能仅由公式给出。
-6. **`dirDiffThre`**：建议 `0.3~0.6 rad`，弯道多、$R_{min}$ 大的车辆取更小值。
-7. **`switchTimeThre`**：不小于实测的转向回正时间，仿真默认 `1.0 s` 通常需要上调。
-8. **`maxAccel`**：不超过直线实测最大加速度，且应满足弯道入口处 $v^2/R_{min} \le a_{lat,max}$ 的隐含约束（可通过在到达弯道前提前减速、结合 `slowDwnDisThre` 实现，而不是单纯限制线加速度）。
-9. **`checkRotObstacle`**：`false`。
-10. **`noRotAtStop`、`noRotAtGoal`**：`true`。
-11. **候选路径库曲率**：确保不小于 $R_{min}$，否则必须先按 8.4 节重新生成路径库，这一步优先级高于以上所有参数调整，因为其余参数都建立在"路径本身对 Ackermann 可行"这个前提之上。
-
-#### 本车（$L=0.55\,\text{m}$、$\delta_{max}=0.45\,\text{rad}$、$R_{min}\approx1.14\,\text{m}$）的实际取值
-
-按上述 11 步代入本车参数后，`local_planner.launch` 中当前实际生效（已应用）的取值如下；其中带`*`的两项是本轮新增/修改的：
-
-| 参数 | 计算依据 | 当前 launch 取值 | 结论 |
-| --- | --- | --- | --- |
-| $R_{min}$ | $0.55/\tan(0.45)$ | — | $\approx1.14\,\text{m}$ |
-| `maxSpeed` | $v_{req}=1.0\,\text{m/s}$ 小于 $\sqrt{a_{lat,max}\cdot R_{min}}$（$a_{lat,max}$ 取 $0.3g\sim0.4g$ 时约为 $1.83\sim2.11\,\text{m/s}$），无需下调 | `1.0` | 满足，且仍有约 45%~53% 的加速度余量 |
-| `maxYawRate` | $\dfrac{1.0\times\tan(0.45)}{0.55}\times\dfrac{180}{\pi}\times0.9\approx45.2°/\text{s}$ | `45.0` | 与安全系数 0.9 的计算结果基本一致 |
-| `lookAheadDis` | $1.0R_{min}\sim1.5R_{min}=1.14\sim1.71\,\text{m}$ | `1.5` | 落在建议区间内 |
-| `dirDiffThre` | 建议 `0.3~0.6 rad` | `0.5` | 落在建议区间内 |
-| `switchTimeThre` | 需 $\ge$ 实测转向回正时间，仿真默认 `1.0 s` 需上调 | `1.8` | 已上调，仍需现场实测复核 |
-| `checkRotObstacle` | 固定 `false` | `false` | 一致 |
-| `noRotAtStop`／`noRotAtGoal` | 固定 `true` | `true`／`true` | 一致 |
-| `path_generator.py` 的 `angle`\* | 需使 $R_{lib}\ge R_{min}$；`dis=1.0` 时原始 `angle=27.0` 对应 $R_{lib}\approx0.39\,\text{m}$，改为 `angle=7.0` 后 $R_{lib}\approx1.30\,\text{m}$ | `7.0`（原 `27.0`） | 已重新生成 `paths.ply`/`startPaths.ply`/`pathList.ply`/`correspondences.txt` |
-| `minPathScale`\* | $\ge R_{min}/R_{lib}=1.14/1.30\approx0.875$ | `0.9`（原 `0.75`） | 已上调，留有安全余量 |
-
-`yawRateGain`（`10.0`）、`stopYawRateGain`（`7.5`）、`maxAccel`（`0.2`）仍需按第 5、8 步在实车上从小到大试调和实测校核，公式只给出方向而非唯一解，不能直接照搬到不同轮胎/路面条件的车辆上。
+改变 `dis`、`angle` 或 `scale` 后，重新生成 `startPaths.ply`、`paths.ply`、`pathList.ply` 和 `correspondences.txt`，并检查生成器、launch、`localPlanner.cpp` 的网格配置及 correspondence 行数一致。再以实际轴距/转角重算 $R_{min}$，确认 $minPathScale\times R_{lib}\ge(1+m)R_{min}$；最后在可急停场地低速比较 `/path` 和里程计轨迹。若出现持续切弯，先检查实际曲率、转向限幅和底盘参数，再调跟踪增益。
 
 ### 7.5 扩展地形与统计
 
@@ -792,7 +619,7 @@ python3 path_generator.py
 
 该脚本的体素尺寸、范围与 `localPlanner.cpp` 的编译期常量必须一致。生成完成后，检查四个 PLY/TXT 文件均已更新，再重新启动 `localPlanner`。
 
-对 Ackermann 底盘，还需额外改动和校验 `dis`/`angle`/`scale` 这三个曲线生成参数（见 7.3 节 Ackermann 相关小节）：`dis` 决定路径总长 $3\times dis$，不应超过 `gridVoxelOffsetX`（默认 `3.2 m`，对应硬编码的 `gridVoxelNumX=161`），否则需同步修改 `localPlanner.cpp` 中的网格常量并重新编译；`angle` 直接决定候选曲线的曲率，是让路径库满足 $R_{min}$ 的主要调整旋钮。生成后应对 `paths.ply` 做一次逐路径最小曲率半径检查（按路径 ID 分组，每隔约 0.2 m 采样三点计算外接圆半径，取全部路径的最小值作为 $R_{lib}$），确认 $R_{lib}$ 比 $R_{min}$ 留有 10%~20% 余量，再据此设置 `minPathScale`$\ge R_{min}/R_{lib}$。
+对 Ackermann 底盘，还需额外校核 `dis`/`angle`/`scale`：路径长度及偏移范围必须落在碰撞网格内；`angle` 影响曲率，应从实际发布的 `startPaths.ply` 代表路径测量最小半径，并确认 `minPathScale\times R_{lib}` 比 $R_{min}$ 留有 10%~20% 余量。网格尺寸改变时，要同步修改 `path_generator.py`、launch 和 `localPlanner.cpp` 的编译期常量，重新编译并重生成全部路径文件。
 
 ### 8.5 新增一个 ROS 节点
 
@@ -854,7 +681,7 @@ Gazebo 负责渲染环境和产生 `/velodyne_points`；`vehicleSimulator` 不�
 
 该节点的难点不是单纯保存点云，而是给每个点找到“本地地面基准”。每帧先将点云裁剪到车辆附近和允许的相对高度范围，并在每个点中写入采集时间作为临时 intensity。滚动体素地图随车辆跨越 1 m 网格而搬移，过期点按 `decayTime` 删除，再做体素下采样控制点数。
 
-接着将附近点投影到二维 $0.2$ m 平面格。一个点同时加入邻近 $3 \times 3$ 格，减少格边界的不连续性；每格最低点或 `quantileZ` 分位数被当作地面高度。最终点的输出 intensity 为 $z-z_{ground}$；若 `considerDrop=true`，则使用绝对值，使凹坑和突起都形成代价。
+接着将附近点投影到二维 $0.2$ m 平面格。一个点同时加入邻近 $3 \times 3$ 格，减少格边界跳变；每格最低点或 `quantileZ` 分位数被当作地面高度。最终点的输出 intensity 为 $z-z_{ground}$；若 `considerDrop=true`，则使用绝对值，使凹坑和突起都形成代价。
 
 动态障碍清除选项 `clearDyObs` 利用车辆姿态把点转到车体系，依据垂直视场和遮挡关系判断某格是否可能是动态物体；无数据保护选项则把长期未观测的格扩张为障碍。规划器只需读取最终高度差，无需重复执行地面分割。
 

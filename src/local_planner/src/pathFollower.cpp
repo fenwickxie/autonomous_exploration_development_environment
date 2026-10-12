@@ -427,6 +427,14 @@ int main(int argc, char** argv)
         // 接近静止时发布零线速度，抑制数值漂移。
         if (fabs(vehicleSpeed) <= maxAccel / 100.0) cmd_vel.linear.x = 0;
         else cmd_vel.linear.x = vehicleSpeed;
+
+        // Ackermann yaw rate scales with forward speed; maxYawRate is the safe cap at maxSpeed.
+        float speedRatio = maxSpeed > 0 ? fabs(cmd_vel.linear.x) / maxSpeed : 0;
+        if (speedRatio > 1.0) speedRatio = 1.0;
+        float yawRateLimit = maxYawRate * speedRatio * PI / 180.0;
+        if (vehicleYawRate > yawRateLimit) vehicleYawRate = yawRateLimit;
+        else if (vehicleYawRate < -yawRateLimit) vehicleYawRate = -yawRateLimit;
+
         cmd_vel.angular.z = vehicleYawRate;
         pubSpeed.publish(cmd_vel);
 
