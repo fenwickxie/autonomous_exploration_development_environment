@@ -5,7 +5,7 @@
   <arg name="cameraOffsetZ" default="0"/>
   <arg name="twoWayDrive" default="true"/>
   <!-- maxSpeed为车辆的最大速度，单位为米/秒 -->
-  <arg name="maxSpeed" default="1.0"/>
+  <arg name="maxSpeed" default="0.6"/>
   <!-- autonomyMode为自主模式开关，autonomySpeed为自主模式下的速度，单位为米/秒 -->
   <arg name="autonomyMode" default="true"/>
   <arg name="autonomySpeed" default="0.05"/>
@@ -83,9 +83,9 @@
     <!-- 转向倒车时间阈值 -->
     <param name="switchTimeThre" type="double" value="1.8" />
     <!-- 方向差异阈值 -->
-    <param name="dirDiffThre" type="double" value="0.5" />
+    <param name="dirDiffThre" type="double" value="1.5" />
     <param name="stopDisThre" type="double" value="0.2" />
-    <!-- 减速距离值域 -->
+    <!-- 减速距离阈值 -->
     <param name="slowDwnDisThre" type="double" value="2.0" />
 
     <!-- 启用坡度 -->
