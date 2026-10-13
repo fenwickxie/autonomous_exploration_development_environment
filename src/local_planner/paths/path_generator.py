@@ -52,7 +52,7 @@ def main():
     dis = 1.5 # dis表示的是
     # Ackermann: L=0.55 m、delta_max=30 度、minPathScale=0.9 时，36 度
     # 使代表路径最紧半径缩放后仍比底盘最小转弯半径大约 13%。
-    angle = 30
+    angle = 15
     delta_angle = angle / 3.0
     scale = 0.65
 

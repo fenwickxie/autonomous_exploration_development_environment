@@ -966,6 +966,9 @@ int main(int argc, char** argv)
             // 计算路径的最终得分，综合考虑方向差、旋转方向权重和惩罚分数。
             // 此公式的依据为：路径的方向差越小、旋转方向越接近理想值、地形高度越低，路径得分越高。
             float score = (1 - sqrt(sqrt(dirWeight * dirDiff))) * rotDirW * rotDirW * rotDirW * rotDirW * penaltyScore; 
+            // // 平滑地偏好终点方向接近目标方向的路径，不再额外强烈偏好小转角。
+            // float score = exp(-dirWeight * dirDiff) * penaltyScore; 
+  
             // 如果路径得分大于 0，则将其累加到对应的路径组得分中。
             if (score > 0) {
               clearPathPerGroupScore[groupNum * rotDir + pathList[i % pathNum]] += score;
