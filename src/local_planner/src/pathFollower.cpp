@@ -100,6 +100,7 @@ double goalY = 0;
 bool odomReceived = false;
 bool goalReceived = false;
 bool goalReachedPublished = false;
+bool goalStopLatched = false;
 
 nav_msgs::Path path;
 
@@ -187,6 +188,7 @@ void goalHandler(const geometry_msgs::PointStamped::ConstPtr& goal)
 
   if (!goalReceived || sqrt(goalChangeX * goalChangeX + goalChangeY * goalChangeY) > goalChangeThre) {
     goalReachedPublished = false;
+    goalStopLatched = false;
   }
 
   goalX = goal->point.x;
@@ -316,6 +318,7 @@ int main(int argc, char** argv)
       double goalDisY = goalY - vehicleY;
       double goalDis = sqrt(goalDisX * goalDisX + goalDisY * goalDisY);
       if (goalDis <= stopDisThre) {
+        goalStopLatched = true;
         std_msgs::Bool goalReached;
         goalReached.data = true;
         pubGoalReached.publish(goalReached);
@@ -419,6 +422,12 @@ int main(int argc, char** argv)
         vehicleYawRate = 0;
       }
 
+      // Keep a completed goal stopped in autonomy; manual joystick control remains available.
+      if (goalStopLatched && autonomyMode) {
+        vehicleSpeed = 0;
+        vehicleYawRate = 0;
+      }
+
       if (safetyStop >= 1) vehicleSpeed = 0;
       if (safetyStop >= 2) vehicleYawRate = 0;
 
@@ -428,12 +437,12 @@ int main(int argc, char** argv)
         if (fabs(vehicleSpeed) <= maxAccel / 100.0) cmd_vel.linear.x = 0;
         else cmd_vel.linear.x = vehicleSpeed;
 
-        // // Ackermann yaw rate scales with forward speed; maxYawRate is the safe cap at maxSpeed.
-        // float speedRatio = maxSpeed > 0 ? fabs(cmd_vel.linear.x) / maxSpeed : 0;
-        // if (speedRatio > 1.0) speedRatio = 1.0;
-        // float yawRateLimit = maxYawRate * speedRatio * PI / 180.0;
-        // if (vehicleYawRate > yawRateLimit) vehicleYawRate = yawRateLimit;
-        // else if (vehicleYawRate < -yawRateLimit) vehicleYawRate = -yawRateLimit;
+        // Ackermann yaw rate scales with forward speed; maxYawRate is the safe cap at maxSpeed.
+        float speedRatio = maxSpeed > 0 ? fabs(cmd_vel.linear.x) / maxSpeed : 0;
+        if (speedRatio > 1.0) speedRatio = 1.0;
+        float yawRateLimit = maxYawRate * speedRatio * PI / 180.0;
+        if (vehicleYawRate > yawRateLimit) vehicleYawRate = yawRateLimit;
+        else if (vehicleYawRate < -yawRateLimit) vehicleYawRate = -yawRateLimit;
 
         cmd_vel.angular.z = vehicleYawRate;
         pubSpeed.publish(cmd_vel);

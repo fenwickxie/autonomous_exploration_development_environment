@@ -1,8 +1,11 @@
 <launch>
 
   <node pkg="loam_interface" type="loamInterface" name="loamInterface" output="screen" required="true">
-    <param name="stateEstimationTopic" type="string" value="/odin1/odometry" />
-    <param name="registeredScanTopic" type="string" value="/odin1/cloud_slam" />
+    <!-- <param name="stateEstimationTopic" type="string" value="/odin1/odometry" />
+    <param name="registeredScanTopic" type="string" value="/odin1/cloud_slam" /> -->
+
+    <param name="stateEstimationTopic" type="string" value="/lio/odom" />
+    <param name="registeredScanTopic" type="string" value="/corrected_current_pcd" />
     <param name="flipStateEstimation" type="bool" value="false" />
     <param name="flipRegisteredScan" type="bool" value="false" />
     <param name="sendTF" type="bool" value="true" />
