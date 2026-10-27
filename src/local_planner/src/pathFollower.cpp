@@ -45,6 +45,7 @@ double yawRateGain = 7.5;
 double stopYawRateGain = 7.5;
 double maxYawRate = 45.0; // 最大偏航角速度，单位为度/秒
 double maxSpeed = 1.0;
+double maxReverseSpeed = 0.2;
 double maxAccel = 1.0;
 double switchTimeThre = 1.0;
 double dirDiffThre = 0.1;
@@ -114,6 +115,7 @@ void reconfigureCallback(local_planner::PathFollowerConfig &config, uint32_t)
   stopYawRateGain = config.stopYawRateGain;
   maxYawRate = config.maxYawRate;
   maxSpeed = config.maxSpeed;
+  maxReverseSpeed = config.maxReverseSpeed;
   maxAccel = config.maxAccel;
   switchTimeThre = config.switchTimeThre;
   dirDiffThre = config.dirDiffThre;
@@ -259,6 +261,7 @@ int main(int argc, char** argv)
   nhPrivate.getParam("stopYawRateGain", stopYawRateGain);
   nhPrivate.getParam("maxYawRate", maxYawRate);
   nhPrivate.getParam("maxSpeed", maxSpeed);
+  nhPrivate.getParam("maxReverseSpeed", maxReverseSpeed);
   nhPrivate.getParam("maxAccel", maxAccel);
   nhPrivate.getParam("switchTimeThre", switchTimeThre);
   nhPrivate.getParam("dirDiffThre", dirDiffThre);
@@ -402,6 +405,8 @@ int main(int argc, char** argv)
         vehicleYawRate = 0;
       }
 
+      joySpeed2 = fmax(joySpeed2, -maxReverseSpeed);
+
       if (pathSize <= 1) {
         joySpeed2 = 0;
       } else if (endDis / slowDwnDisThre < joySpeed) {
@@ -413,14 +418,12 @@ int main(int argc, char** argv)
       if (odomTime < slowInitTime + slowTime1 && slowInitTime > 0) joySpeed3 *= slowRate1;
       else if (odomTime < slowInitTime + slowTime1 + slowTime2 && slowInitTime > 0) joySpeed3 *= slowRate2;
 
+      float targetSpeed = 0;
       if (fabs(dirDiff) < dirDiffThre && dis > stopDisThre) {
-        // 仅航向对齐时加速，否则转弯时减速。100 Hz 循环使 maxAccel/100 成为每周期增量。
-        if (vehicleSpeed < joySpeed3) vehicleSpeed += maxAccel / 100.0;
-        else if (vehicleSpeed > joySpeed3) vehicleSpeed -= maxAccel / 100.0;
-      } else {
-        if (vehicleSpeed > 0) vehicleSpeed -= maxAccel / 100.0;
-        else if (vehicleSpeed < 0) vehicleSpeed += maxAccel / 100.0;
+        targetSpeed = fmax(joySpeed3, -maxReverseSpeed);
       }
+      if (vehicleSpeed < targetSpeed) vehicleSpeed = fmin(vehicleSpeed + maxAccel / 100.0, targetSpeed);
+      else if (vehicleSpeed > targetSpeed) vehicleSpeed = fmax(vehicleSpeed - maxAccel / 100.0, targetSpeed);
 
       if (odomTime < stopInitTime + stopTime && stopInitTime > 0) {
         vehicleSpeed = 0;

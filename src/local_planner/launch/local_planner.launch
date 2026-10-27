@@ -6,6 +6,7 @@
   <arg name="twoWayDrive" default="true"/>
   <!-- maxSpeed为车辆的最大速度，单位为米/秒 -->
   <arg name="maxSpeed" default="1.5"/>
+  <arg name="maxReverseSpeed" default="0.35"/>
   <!-- autonomyMode为自主模式开关，autonomySpeed为自主模式下的速度，单位为米/秒 -->
   <arg name="autonomyMode" default="true"/>
   <arg name="autonomySpeed" default="1.5"/>
@@ -80,6 +81,7 @@
     <param name="stopYawRateGain" type="double" value="2.0" />
     <param name="maxYawRate" type="double" value="54.0" />
     <param name="maxSpeed" value="$(arg maxSpeed)" />
+    <param name="maxReverseSpeed" type="double" value="$(arg maxReverseSpeed)" />
     <!-- 最大加速度 -->
     <param name="maxAccel" type="double" value="0.5" />
     <!-- 转向倒车时间阈值 -->
