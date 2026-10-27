@@ -252,12 +252,13 @@ vehicleZ = /state_estimation.pose.pose.position.z
 - `decayTime`：远离车辆的历史点保留时间。减小可抑制动态障碍拖影，但可能导致稀疏区域地图断裂；增大地图更连续，但旧障碍消失更慢。
 - `noDecayDis`：车辆周围不轻易衰减的半径。应覆盖车辆近期仍需要稳定判断的区域；过大可能保留动态物体，过小可能造成近场闪烁。
 - `clearingDis`：收到 `/map_clearing` 或手柄清理请求时的清除半径。它只影响显式清理，不等同于自然时间衰减。
+- `voxelPointUpdateThre`、`voxelTimeUpdateThre`：分别按体素内新点数量和距上次处理的时间触发下采样、历史点筛选。降低阈值会使地图更及时但增加更新开销；提高阈值会减少更新频率，也可能延迟旧点清理。两种条件满足其一即可触发。
 
 **地面估计**
 
 - `useSorting`：是否按高度排序估计地面。当前 launch 设置为 `false`，因此 `quantileZ` 和 `limitGroundLift` 在当前配置下不会实际生效；需要先把 `useSorting` 设为 `true`。
 - `quantileZ`：排序模式下使用的分位数。较小值更接近最低地面，能减少地面上方物体把地面估计抬高的问题；过小则容易受低点噪声、坑洞影响。常见起点是 `0.1` 到 `0.3`。
-- `limitGroundLift`、`maxGroundLift`：限制一帧内估计地面相对最低点的抬升幅度。当地面被障碍物抬高时可开启；`maxGroundLift` 太小会压平真实台阶，太大则抑制效果有限。
+- `limitGroundLift`、`maxGroundLift`：排序模式下将地面估计限制在该格最低采样高度以上 `maxGroundLift` 米以内。当地面被高处点抬升时可开启；值太小可能压低真实地面或台阶，值太大则限制效果变弱。
 - `minBlockPointNum`：一个平面格至少需要多少点才认为有可靠地面支持。增大可减少稀疏噪声和误检，但会把边缘区域变成无数据；减小能提高覆盖率，但更容易把偶然点当成地面。
 
 **垂直范围和障碍高度**
@@ -271,15 +272,20 @@ vehicleZ = /state_estimation.pose.pose.position.z
 
 - `clearDyObs`：是否启用动态障碍/遮挡清除。开启后，满足条件的栅格不会简单地长期保留为静态障碍；如果场景中需要把行人和车辆也当作必须避让的障碍，应谨慎开启，并结合规划器行为验证。
 - `minDyObsDis`：动态障碍判断的近距离下限。过小可能把车体或近场噪声纳入判断，过大则可能忽略真正靠近车辆的物体。
-- `minDyObsAngle`：点相对地面的最小仰角。增大可排除低矮地面起伏，减小则更容易捕获低矮物体。
-- `minDyObsRelZ`、`absDyObsRelZThre`：动态点的相对高度门槛。它们用于区分地面起伏和具有明显高度变化的遮挡物。
+- `minDyObsAngle`：点相对于传感器位姿参考点的仰角下限。增大可排除低仰角点，减小会纳入更多低处点；它不是经地面估计得到的坡度阈值。
+- `minDyObsRelZ`：动态判断仰角计算时使用的相对高度偏置，参考 `/state_estimation` 位姿原点，不是地面高度。调整前应结合传感器安装高度和地面点的 `relative_z` 检查。
+- `absDyObsRelZThre`：对经过姿态旋转的候选点，接近传感器水平面的高度容差；它和下列视场角条件共同影响栅格计数。值增大通常会让更多点符合条件。
 - `minDyObsVFOV`、`maxDyObsVFOV`：动态判断使用的垂直视场角范围。应与实际雷达安装姿态和有效垂直视场一致；范围过窄会漏检，过宽会把地面或高处结构混入。
-- `minDyObsPointNum`：一个平面格内达到多少动态候选点才执行清除。设为 `1` 很敏感，适合点云稀疏但误删风险较高；增大可提高稳定性。
+- `minDyObsPointNum`：一个平面格的候选计数达到该值后，该格的点才会被过滤。设为 `1` 很敏感，可能误清除；增大可提高稳定性，但也可能留下动态物体。
 
 **未知区域安全策略**
 
 - `noDataObstacle`：是否把没有足够观测的格子视为障碍。开启更安全但更保守，可能导致规划器无路；室内遮挡多或需要谨慎探索时可开启，开阔且点云稀疏的场景通常先关闭。
-- `noDataBlockSkipNum`：未知区域边界扩张的网格步数。增大会扩大安全余量，也会进一步压缩可规划空间。该参数只有在 `noDataObstacle=true` 且系统完成移动初始化后才有意义。
+- `noDataBlockSkipNum`：未知区域边界扩张的网格步数；基础平面格边长为 `0.2 m`，增大可扩大保守边界，也会压缩可规划空间。该参数只有在 `noDataObstacle=true` 且机器人已移动至少 `noDecayDis` 后才有实际作用。
+
+#### 参数生效方式与修改位置
+
+`terrain_analysis/launch/terrain_analysis.launch` 设置基础节点的启动参数；`terrain_analysis/cfg/TerrainAnalysis.cfg` 列出的参数支持运行时动态重配置。`scanVoxelSize` 和 `vehicleHeight` 不在动态重配置列表中，修改后需重启节点；其他已开放的动态参数可通过 `rqt_reconfigure` 临时调整。运行时调整不会自动写回 launch，验证有效后应同步修改 launch，保证重启后配置一致。`terrain_analysis_ext` 也有各自独立的 launch 和 cfg，不能把一个节点的参数名或数值直接当作另一个节点的配置。
 
 #### 当前 launch 默认值的解读
 
@@ -292,7 +298,7 @@ vehicleZ = /state_estimation.pose.pose.position.z
 - `clearDyObs=true`、`minDyObsPointNum=1`：动态清除较敏感，单个满足条件的候选点就可能触发过滤，应特别检查稀疏噪声和行人/车辆场景。
 - `noDataObstacle=false`：未知区域默认不直接阻塞规划，地图覆盖不足时仍可能允许路径通过。
 - `minBlockPointNum=10`：要求每格有一定观测支持，能过滤少量孤立点，但在稀疏雷达或远距离区域可能造成覆盖不足。
-- `terrain_analysis.vehicleHeight=0.5`、`minRelZ=-2.5`、`maxRelZ=1.0`：这里的 `0.5` 是地形输出高差上限，不是车高；输入范围则是相对 `sensor` 原点的高度范围。是否合理必须结合 `/state_estimation` 的 `sensor` 原点离地高度检查，例如传感器离地约 0.75 m 时，地面相对高度约为 -0.75 m，能够落在当前 `[-2.5, 1.0]` 范围内。
+- `terrain_analysis.vehicleHeight=1.0`、`minRelZ=-1.0`、`maxRelZ=1.0`：`1.0` 是输出相对地面高差上限，不是车高；输入裁剪范围则相对 `sensor` 原点。是否能保留地面必须结合 `/state_estimation` 的原点高度检查，例如传感器离地约 `0.75 m` 时，地面点相对高度约为 `-0.75 m`，仅有 `0.25 m` 的下界余量，地面起伏或安装偏差可能使地面点被裁掉。应据实机数据校准 `minRelZ`，而不是照搬仿真默认值。
 
 #### 推荐调参流程
 
@@ -321,6 +327,25 @@ vehicleZ = /state_estimation.pose.pose.position.z
 | 规划器完全找不到路径 | 先检查 `/terrain_map` 是否为空，再暂时关闭 `checkObstacle` 或提高可接受点数阈值做对照；确认不是地形参数把所有路径都标成高代价。 |
 
 调参时应区分三类问题：**输入点没有进入裁剪范围**、**地面基准估计错误**、**障碍点被输出后规划器拒绝**。分别查看 `/registered_scan`、`/terrain_map` 的点数、`frame_id`、`intensity` 和 `/terrain_map` 频率，比只在 RViz 中观察颜色更容易定位根因。
+
+#### 扩展地形节点参数
+
+`terrainAnalysisExt` 订阅 `/registered_scan` 和基础节点的 `/terrain_map`，输出较大范围的 `/terrain_map_ext`。其滚动点云窗口为 $41 \times 41$ 个边长 `2 m` 的单元，地面估计平面格为 `0.4 m`。在半径 `localTerrainMapRadius` 内直接复用基础 `/terrain_map`；半径外由扩展节点估计。该话题默认不作为 `localPlanner` 的输入，因此扩展节点参数不会自动改变默认局部规划结果。
+
+- `lowerBoundZ`、`upperBoundZ`：扩展节点输入点相对于 `/state_estimation` 位姿参考点的高度下界和上界；`disRatioZ` 按水平距离放宽范围。参数应按同一参考系设置，不能直接套用基础节点的 `minRelZ`、`maxRelZ`。
+- `scanVoxelSize`：扩展点云下采样尺寸。减小能保留更多几何细节，但增加计算和内存开销；扩展地图通常以较大范围为目标，过细可能显著增加成本。
+- `decayTime`、`noDecayDis`：分别控制远处历史点保留时间和近场不衰减半径。当前 launch 的 `noDecayDis=0`，意味着没有额外的近场保留半径，历史点按 `decayTime` 衰减。
+- `clearingDis`：收到 `/cloud_clearing` 或手柄清理请求时使用的清除半径；这与基础节点的 `/map_clearing` 清理相互独立。
+- `voxelPointUpdateThre`、`voxelTimeUpdateThre`：按新点数量或等待时间触发扩展体素更新；降低阈值提高响应性但增加更新开销。
+- `useSorting`、`quantileZ`：控制扩展图地面估计使用最低点还是高度分位数。`useSorting=false` 时 `quantileZ` 不起作用。
+- `vehicleHeight`：扩展地图输出点允许的相对地面高差上限；不是车辆几何高度。高差使用绝对值计算，因此高于或低于估计地面的点都可能进入扩展图。
+- `checkTerrainConn`：开启后，从车辆下方平面格开始传播地形连通区域，只输出被判定为连通的远场点。关闭时不执行这一连通性筛选。
+- `terrainUnderVehicle`：仅当车辆正下方平面格没有地面样本时，作为连通传播的起始地面高度偏置，基准是 `vehicleZ`。应与 odometry 原点到地面的实际高差相符。
+- `terrainConnThre`：相邻连通扩展格允许的最大高度差。减小会严格筛除坡度或台阶变化，也可能切断可通行地面；增大更容易连通，但会增加跨越不同表面的风险。
+- `ceilingFilteringThre`：高度差超过该阈值时将相应格标为不连通，用于隔离顶棚或跨层表面。它不是常规障碍高度阈值；需与场景中地面到顶棚/楼层的高度差共同校准。
+- `localTerrainMapRadius`：近场复用基础 `/terrain_map` 的半径。增大可扩大高分辨率基础图的覆盖范围，同时减少扩展节点自行输出的区域。
+
+扩展节点启动默认值见 [terrain_analysis_ext/launch/terrain_analysis_ext.launch](../src/terrain_analysis_ext/launch/terrain_analysis_ext.launch)：`scanVoxelSize=0.1`、`decayTime=10`、`noDecayDis=0`、`vehicleHeight=1.5`、`lowerBoundZ=-2.5`、`upperBoundZ=1.0`、`checkTerrainConn=false`、`localTerrainMapRadius=4.0`。其中 `scanVoxelSize` 和 `vehicleHeight` 不在动态重配置列表中，修改后需重启节点；`checkTerrainConn` 可由该 launch 的参数传入，其他在线可调范围以 `TerrainAnalysisExt.cfg` 为准。
 
 ### 7.3 局部规划
 
