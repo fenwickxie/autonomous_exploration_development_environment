@@ -326,7 +326,12 @@ int main(int argc, char** argv)
       }
     }
 
-    if (pathInit) {
+    if (autonomyMode && (!goalReceived || goalStopLatched)) {
+      vehicleSpeed = 0;
+      vehicleYawRate = 0;
+      cmd_vel = geometry_msgs::Twist();
+      pubSpeed.publish(cmd_vel);
+    } else if (pathInit) {
       // 将当前车辆位置变换到接收路径时的参考系，无需要求路径采用全局表示。
       float vehicleXRel = cos(vehicleYawRec) * (vehicleX - vehicleXRec) 
                         + sin(vehicleYawRec) * (vehicleY - vehicleYRec);
@@ -418,12 +423,6 @@ int main(int argc, char** argv)
       }
 
       if (odomTime < stopInitTime + stopTime && stopInitTime > 0) {
-        vehicleSpeed = 0;
-        vehicleYawRate = 0;
-      }
-
-      // Keep a completed goal stopped in autonomy; manual joystick control remains available.
-      if (goalStopLatched && autonomyMode) {
         vehicleSpeed = 0;
         vehicleYawRate = 0;
       }
