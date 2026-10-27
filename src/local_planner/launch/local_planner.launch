@@ -110,7 +110,7 @@
     <param name="joyToSpeedDelay" value="$(arg joyToSpeedDelay)" />
   </node>
 
-  <node pkg="tf" type="static_transform_publisher" name="vehicleTransPublisher" args="-$(arg sensorOffsetX) -$(arg sensorOffsetY) 0 0 0 0 /sensor /vehicle 1000"/>
+  <node pkg="tf" type="static_transform_publisher" name="vehicleTransPublisher" args="-$(arg sensorOffsetX) -$(arg sensorOffsetY) -0.5 0 0 0 /sensor /vehicle 1000"/>
 
   <node pkg="tf" type="static_transform_publisher" name="sensorTransPublisher" args="0 0 $(arg cameraOffsetZ) 0 0 0 /sensor /camera 1000"/>
 

@@ -18,9 +18,9 @@
 
   <include file="$(find terrain_analysis)/launch/terrain_analysis.launch" />
 
-  <include file="$(find terrain_analysis_ext)/launch/terrain_analysis_ext.launch" >
+  <!-- <include file="$(find terrain_analysis_ext)/launch/terrain_analysis_ext.launch" >
     <arg name="checkTerrainConn" value="$(arg checkTerrainConn)"/>
-  </include>
+  </include> -->
 
   <!-- <include file="$(find sensor_scan_generation)/launch/sensor_scan_generation.launch" /> -->
 
