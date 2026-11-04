@@ -314,11 +314,13 @@ vehicleZ = /state_estimation.pose.pose.position.z
 
 #### 典型现象与调整方向
 
+点云噪声导致地面估计异常或局部凸起时，参见[点云噪声与局部凸起调参指引](./TERRAIN_NOISE_TUNING_ZH.md)。该指引区分地面基准偏差与孤立噪声，给出单变量试验流程、当前配置及跨帧记忆限制；不要仅凭地图更平整判断调参成功。
+
 | 现象 | 优先检查和调整 |
 | --- | --- |
 | 地面被抬高，障碍物像地面 | 开启 `useSorting`，降低 `quantileZ`；必要时开启 `limitGroundLift`。 |
 | 小障碍漏检 | 减小 `scanVoxelSize`，降低 `minBlockPointNum`，确认 `maxRelZ` 没有限制掉目标，并检查 `terrain_analysis.vehicleHeight` 这个输出高差上限是否过小。 |
-| 点云噪声造成大量障碍 | 增大 `scanVoxelSize` 或 `minBlockPointNum`，检查 `minRelZ/maxRelZ` 是否包含了无关点。 |
+| 点云噪声造成大量障碍 | 先区分地面基准错误和孤立高低点，再小幅验证下采样或上游离群点过滤；`minBlockPointNum` 不是离群点过滤器，单纯提高可能造成缺图。 |
 | 动态物体留下拖影 | 适当减小 `decayTime`，检查 `noDecayDis` 是否过大；再验证 `clearDyObs` 的 VFOV 和距离条件。 |
 | 动态物体被清除后规划直接穿过 | 关闭 `clearDyObs` 做对照，或让动态物体通过外部障碍接口/规划器单独处理，不要把“清除动态点”当作“动态物体安全”。 |
 | 坑洼或台阶没有被阻挡 | 确认 `considerDrop=true`，并检查地面估计是否跨越了落差。 |
