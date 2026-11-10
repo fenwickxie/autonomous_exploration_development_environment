@@ -4,6 +4,9 @@
     
     <param name="scanVoxelSize" type="double" value="0.05" />
     <param name="decayTime" type="double" value="2.0" />
+    <param name="temporalVoxelSize" type="double" value="0.15" />
+    <param name="temporalHitWindow" type="int" value="5" />
+    <param name="temporalHitThreshold" type="int" value="3" />
     <param name="noDecayDis" type="double" value="2.0" />
     <param name="clearingDis" type="double" value="8.0" />
     <param name="useSorting" type="bool" value="true" />

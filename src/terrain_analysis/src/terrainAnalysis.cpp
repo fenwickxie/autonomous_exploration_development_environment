@@ -6,6 +6,10 @@
 #include <stdlib.h>
 #include <time.h>
 
+#include <deque>
+#include <set>
+#include <tuple>
+
 #include <message_filters/subscriber.h>
 #include <message_filters/sync_policies/approximate_time.h>
 #include <message_filters/synchronizer.h>
@@ -31,6 +35,7 @@ const double PI = 3.1415926;
 // 从 terrain_analysis.launch 读取的配置，定义时序地图窗口、点高度范围和障碍解释方式。
 double scanVoxelSize = 0.05;      // 扫描点云体素滤波尺寸，用于下采样，单位为米
 double decayTime = 2.0;           // 衰减时间，用于动态障碍的时间衰减
+double temporalVoxelSize = 0.15;  // 跨帧确认体素尺寸，单位为米
 double noDecayDis = 4.0;          // 无衰减距离，用于动态障碍的空间衰减
 double clearingDis = 8.0;         // 清除距离，用于动态障碍的空间清除
 bool clearingCloud = false;       // 是否清除点云，用于动态障碍的空间清除
@@ -85,6 +90,10 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr terrainVoxelCloud[terrainVoxelNum]; // 三�
 
 int terrainVoxelUpdateNum[terrainVoxelNum] = {0};    // 每个三维点云格的更新次数
 float terrainVoxelUpdateTime[terrainVoxelNum] = {0}; // 每个三维点云格的更新时间
+typedef tuple<int, int, int> TemporalVoxelKey;
+int temporalHitWindow = 5;
+int temporalHitThreshold = 3;
+deque<set<TemporalVoxelKey>> temporalVoxelHistory;
 float planarVoxelElev[planarVoxelNum] = {0};         // 每个二维高程网格的高程值
 int planarVoxelEdge[planarVoxelNum] = {0};           // 每个二维高程网格的边缘标记
 int planarVoxelDyObs[planarVoxelNum] = {0};          // 每个二维高程网格的动态障碍标记
@@ -107,9 +116,29 @@ float sinVehicleYaw = 0, cosVehicleYaw = 0;     // 车辆偏航角的正弦和�
 
 pcl::VoxelGrid<pcl::PointXYZI> downSizeFilter; // 点云下采样滤波器
 
+TemporalVoxelKey getTemporalVoxelKey(const pcl::PointXYZI &point)
+{
+  return make_tuple(int(floor(point.x / temporalVoxelSize)),
+                    int(floor(point.y / temporalVoxelSize)),
+                    int(floor(point.z / temporalVoxelSize)));
+}
+
 void reconfigureCallback(terrain_analysis::TerrainAnalysisConfig &config, uint32_t)
 {
   decayTime = config.decayTime;
+  if (config.temporalVoxelSize != temporalVoxelSize)
+    temporalVoxelHistory.clear();
+  temporalVoxelSize = config.temporalVoxelSize;
+  temporalHitWindow = config.temporalHitWindow;
+  if (config.temporalHitThreshold > temporalHitWindow)
+  {
+    ROS_WARN("temporalHitThreshold (%d) exceeds temporalHitWindow (%d); clamping threshold",
+             config.temporalHitThreshold, temporalHitWindow);
+    config.temporalHitThreshold = temporalHitWindow;
+  }
+  temporalHitThreshold = config.temporalHitThreshold;
+  while (temporalVoxelHistory.size() > temporalHitWindow)
+    temporalVoxelHistory.pop_front();
   noDecayDis = config.noDecayDis;
   clearingDis = config.clearingDis;
   useSorting = config.useSorting;
@@ -252,6 +281,9 @@ int main(int argc, char **argv)
 
   nhPrivate.getParam("scanVoxelSize", scanVoxelSize);
   nhPrivate.getParam("decayTime", decayTime);
+  nhPrivate.getParam("temporalVoxelSize", temporalVoxelSize);
+  nhPrivate.getParam("temporalHitWindow", temporalHitWindow);
+  nhPrivate.getParam("temporalHitThreshold", temporalHitThreshold);
   nhPrivate.getParam("noDecayDis", noDecayDis);
   nhPrivate.getParam("clearingDis", clearingDis);
   nhPrivate.getParam("useSorting", useSorting);
@@ -313,12 +345,8 @@ int main(int argc, char **argv)
     {
       newlaserCloud = false;
 
-      // // 当前实现注意：每帧都会重新初始化所有滚动单元，因此跨帧累积观测会在滚动前丢弃。
-      // // 这里保持该行为不变，因为修改它会改变地图算法行为。
-      // for (int i = 0; i < terrainVoxelNum; i++)
-      // {
-      //   terrainVoxelCloud[i].reset(new pcl::PointCloud<pcl::PointXYZI>()); // 重新初始化每个滚动单元的点云，丢弃跨帧累积观测。
-      // }
+      if (clearingCloud)
+        temporalVoxelHistory.clear();
 
       // 车辆离开中心格时移动指针所有权而不复制点云；新暴露的外侧行/列会被清空。
       float terrainVoxelCenX = terrainVoxelSize * terrainVoxelShiftX; // 当前滚动栅格中心的 X 坐标
@@ -336,9 +364,15 @@ int main(int argc, char **argv)
           {
             terrainVoxelCloud[terrainVoxelWidth * indX + indY] =
                 terrainVoxelCloud[terrainVoxelWidth * (indX - 1) + indY]; // 将左侧的点云移动到右侧
+            terrainVoxelUpdateNum[terrainVoxelWidth * indX + indY] =
+                terrainVoxelUpdateNum[terrainVoxelWidth * (indX - 1) + indY]; // 将左侧的更新次数移动到右侧
+            terrainVoxelUpdateTime[terrainVoxelWidth * indX + indY] =
+                terrainVoxelUpdateTime[terrainVoxelWidth * (indX - 1) + indY]; // 将左侧的更新时间移动到右侧
           }
           terrainVoxelCloud[indY] = terrainVoxelCloudPtr;
           terrainVoxelCloud[indY]->clear();
+          terrainVoxelUpdateNum[indY] = 0; // 新暴露的左侧列的更新次数重置为 0
+          terrainVoxelUpdateTime[indY] = laserCloudTime - systemInitTime; // 新暴露的左侧列的更新时间重置为当前时间
         }
         terrainVoxelShiftX--;
         terrainVoxelCenX = terrainVoxelSize * terrainVoxelShiftX;
@@ -355,11 +389,18 @@ int main(int argc, char **argv)
           {
             terrainVoxelCloud[terrainVoxelWidth * indX + indY] =
                 terrainVoxelCloud[terrainVoxelWidth * (indX + 1) + indY];
+            terrainVoxelUpdateNum[terrainVoxelWidth * indX + indY] =
+                terrainVoxelUpdateNum[terrainVoxelWidth * (indX + 1) + indY]; // 将右侧的更新次数移动到左侧
+            terrainVoxelUpdateTime[terrainVoxelWidth * indX + indY] =
+                terrainVoxelUpdateTime[terrainVoxelWidth * (indX + 1) + indY]; // 将右侧的更新时间移动到左侧
           }
           terrainVoxelCloud[terrainVoxelWidth * (terrainVoxelWidth - 1) +
                             indY] = terrainVoxelCloudPtr;
           terrainVoxelCloud[terrainVoxelWidth * (terrainVoxelWidth - 1) + indY]
               ->clear();
+          int newInd = terrainVoxelWidth * (terrainVoxelWidth - 1) + indY;
+          terrainVoxelUpdateNum[newInd] = 0; // 新暴露的右侧列的更新次数重置为 0
+          terrainVoxelUpdateTime[newInd] = laserCloudTime - systemInitTime; // 新暴露的右侧列的更新时间重置为当前时间
         }
         terrainVoxelShiftX++;
         terrainVoxelCenX = terrainVoxelSize * terrainVoxelShiftX;
@@ -377,9 +418,16 @@ int main(int argc, char **argv)
           {
             terrainVoxelCloud[terrainVoxelWidth * indX + indY] =
                 terrainVoxelCloud[terrainVoxelWidth * indX + (indY - 1)];
+            terrainVoxelUpdateNum[terrainVoxelWidth * indX + indY] =
+                terrainVoxelUpdateNum[terrainVoxelWidth * indX + (indY - 1)]; // 将下方的更新次数移动到上方
+            terrainVoxelUpdateTime[terrainVoxelWidth * indX + indY] =
+                terrainVoxelUpdateTime[terrainVoxelWidth * indX + (indY - 1)]; // 将下方的更新时间移动到上方
           }
           terrainVoxelCloud[terrainVoxelWidth * indX] = terrainVoxelCloudPtr;
           terrainVoxelCloud[terrainVoxelWidth * indX]->clear();
+          int newInd = terrainVoxelWidth * indX;
+          terrainVoxelUpdateNum[newInd] = 0; // 新暴露的下方行的更新次数重置为 0
+          terrainVoxelUpdateTime[newInd] = laserCloudTime - systemInitTime; // 新暴露的下方行的更新时间重置为当前时间
         }
         terrainVoxelShiftY--;
         terrainVoxelCenY = terrainVoxelSize * terrainVoxelShiftY;
@@ -396,22 +444,64 @@ int main(int argc, char **argv)
           {
             terrainVoxelCloud[terrainVoxelWidth * indX + indY] =
                 terrainVoxelCloud[terrainVoxelWidth * indX + (indY + 1)];
+            terrainVoxelUpdateNum[terrainVoxelWidth * indX + indY] =
+                terrainVoxelUpdateNum[terrainVoxelWidth * indX + (indY + 1)]; // 将上方的更新次数移动到下方
+            terrainVoxelUpdateTime[terrainVoxelWidth * indX + indY] =
+                terrainVoxelUpdateTime[terrainVoxelWidth * indX + (indY + 1)]; // 将上方的更新时间移动到下方
           }
           terrainVoxelCloud[terrainVoxelWidth * indX +
                             (terrainVoxelWidth - 1)] = terrainVoxelCloudPtr;
           terrainVoxelCloud[terrainVoxelWidth * indX + (terrainVoxelWidth - 1)]
               ->clear();
+          int newInd = terrainVoxelWidth * indX + (terrainVoxelWidth - 1);
+          terrainVoxelUpdateNum[newInd] = 0; // 新暴露的上方行的更新次数重置为 0
+          terrainVoxelUpdateTime[newInd] = laserCloudTime - systemInitTime; // 新暴露的上方行的更新时间重置为当前时间
         }
         terrainVoxelShiftY++;
         terrainVoxelCenY = terrainVoxelSize * terrainVoxelShiftY;
       }
 
-      // 将当前点插入以车辆为中心的 1 m 单元做时序过滤；此时点 intensity 仍保存初始化后的秒数。
-      pcl::PointXYZI point;
+      // 只将最近 5 帧中至少 3 帧命中的空间体素加入累积地图。
+      set<TemporalVoxelKey> currentFrameVoxels;
       int laserCloudCropSize = laserCloudCrop->points.size();
+      for (int i = 0; i < laserCloudCropSize; i++)
+        currentFrameVoxels.insert(getTemporalVoxelKey(laserCloudCrop->points[i]));
+
+      temporalVoxelHistory.push_back(currentFrameVoxels);
+      if (temporalVoxelHistory.size() > temporalHitWindow)
+        temporalVoxelHistory.pop_front();
+
+      set<TemporalVoxelKey> confirmedVoxels;
+      for (set<TemporalVoxelKey>::const_iterator keyIt =
+               currentFrameVoxels.begin();
+           keyIt != currentFrameVoxels.end(); ++keyIt)
+      {
+        int hitCount = 0;
+        for (deque<set<TemporalVoxelKey>>::const_iterator frameIt =
+                 temporalVoxelHistory.begin();
+             frameIt != temporalVoxelHistory.end(); ++frameIt)
+        {
+          if (frameIt->count(*keyIt) > 0)
+            hitCount++;
+        }
+        if (hitCount >= temporalHitThreshold)
+          confirmedVoxels.insert(*keyIt);
+      }
+
+      pcl::PointXYZI point;
+      pcl::PointCloud<pcl::PointXYZI> stableLaserCloudCrop;
+      stableLaserCloudCrop.points.reserve(laserCloudCropSize);
       for (int i = 0; i < laserCloudCropSize; i++)
       {
         point = laserCloudCrop->points[i];
+        if (confirmedVoxels.count(getTemporalVoxelKey(point)) > 0)
+          stableLaserCloudCrop.push_back(point);
+      }
+      // 将通过跨帧确认的点插入以车辆为中心的 1 m 单元。
+      int stableLaserCloudCropSize = stableLaserCloudCrop.points.size();
+      for (int i = 0; i < stableLaserCloudCropSize; i++)
+      {
+        point = stableLaserCloudCrop.points[i];
 
         int indX = int((point.x - vehicleX + terrainVoxelSize / 2) /
                        terrainVoxelSize) +
