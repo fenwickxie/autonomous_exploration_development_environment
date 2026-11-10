@@ -313,12 +313,12 @@ int main(int argc, char **argv)
     {
       newlaserCloud = false;
 
-      // 当前实现注意：每帧都会重新初始化所有滚动单元，因此跨帧累积观测会在滚动前丢弃。
-      // 这里保持该行为不变，因为修改它会改变地图算法行为。
-      for (int i = 0; i < terrainVoxelNum; i++)
-      {
-        terrainVoxelCloud[i].reset(new pcl::PointCloud<pcl::PointXYZI>()); // 重新初始化每个滚动单元的点云，丢弃跨帧累积观测。
-      }
+      // // 当前实现注意：每帧都会重新初始化所有滚动单元，因此跨帧累积观测会在滚动前丢弃。
+      // // 这里保持该行为不变，因为修改它会改变地图算法行为。
+      // for (int i = 0; i < terrainVoxelNum; i++)
+      // {
+      //   terrainVoxelCloud[i].reset(new pcl::PointCloud<pcl::PointXYZI>()); // 重新初始化每个滚动单元的点云，丢弃跨帧累积观测。
+      // }
 
       // 车辆离开中心格时移动指针所有权而不复制点云；新暴露的外侧行/列会被清空。
       float terrainVoxelCenX = terrainVoxelSize * terrainVoxelShiftX; // 当前滚动栅格中心的 X 坐标
