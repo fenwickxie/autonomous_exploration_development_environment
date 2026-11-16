@@ -395,6 +395,10 @@ int main(int argc, char** argv)
       if (temporalVoxelHistory.size() > temporalHitWindow)
         temporalVoxelHistory.pop_front();
 
+      set<TemporalVoxelKey> recentlyObservedVoxels;
+      for (const auto &frameVoxels : temporalVoxelHistory)
+        recentlyObservedVoxels.insert(frameVoxels.begin(), frameVoxels.end());
+
       set<TemporalVoxelKey> confirmedVoxels;
       for (set<TemporalVoxelKey>::const_iterator keyIt =
                currentFrameVoxels.begin();
@@ -462,7 +466,9 @@ int main(int argc, char** argv)
             float dis = sqrt((point.x - vehicleX) * (point.x - vehicleX) + (point.y - vehicleY) * (point.y - vehicleY));
             if (point.z - vehicleZ > lowerBoundZ - disRatioZ * dis &&
                 point.z - vehicleZ < upperBoundZ + disRatioZ * dis &&
-                (laserCloudTime - systemInitTime - point.intensity < decayTime || dis < noDecayDis) &&
+                (laserCloudTime - systemInitTime - point.intensity < decayTime ||
+                 (dis < noDecayDis &&
+                  recentlyObservedVoxels.count(getTemporalVoxelKey(point)) > 0)) &&
                 !(dis < clearingDis && clearingCloud))
             {
               terrainVoxelCloudPtr->push_back(point);

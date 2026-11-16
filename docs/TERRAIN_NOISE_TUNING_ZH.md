@@ -96,11 +96,13 @@ limitGroundLift = true:
 
 不要通过降低 `vehicleHeight`、缩窄高度裁剪范围来隐藏高代价点；这些操作也会删除真实障碍。不要通过加强 `clearDyObs` 清除静态噪声，也不要为了消除视觉异常直接关闭 `considerDrop`，否则可能失去对真实落差的风险表达。
 
-## 6. 当前实现的时间记忆限制
+## 6. 跨帧确认与历史点清理
 
-[基础节点主循环](../src/terrain_analysis/src/terrainAnalysis.cpp)每次处理新点云时都会重新创建全部滚动体素点云，上一帧的观测因此被丢弃。当前不能依赖调整 `decayTime`、`noDecayDis` 获得正常的跨帧平滑或历史点衰减效果。
+[基础节点主循环](../src/terrain_analysis/src/terrainAnalysis.cpp)和[扩展节点](../src/terrain_analysis_ext/src/terrainAnalysisExt.cpp)会保留滚动地图，并将最近 `temporalHitWindow` 帧内命中至少 `temporalHitThreshold` 帧的空间体素加入地图。`temporalVoxelSize` 控制跨帧匹配的空间分辨率。这是入图确认，不代表窗口移出时立即删除所有历史点。
 
-`voxelPointUpdateThre` 和 `voxelTimeUpdateThre` 影响下采样及筛选触发时机，不是时间平均参数。若需要跨帧稳定地面估计，应单独修正并验证地图生命周期或实现时间滤波，不能仅靠改 launch 数值。本指引不修改算法行为；此限制也不应直接套用于扩展节点 `terrainAnalysisExt`。
+旧实现中，`noDecayDis` 内的点无条件免于时间衰减，因此即使障碍已移走，近场旧点仍可能永久残留。现在只有最近窗口内仍有原始裁剪点云命中的近场体素才允许免衰减；失去窗口内观测支持后，旧点按 `decayTime` 过期。设置 `noDecayDis=0` 可取消近场免衰减。
+
+`voxelPointUpdateThre` 和 `voxelTimeUpdateThre` 影响下采样及筛选触发时机，不是时间平均参数。旧点在既超过 `decayTime`、又失去近场窗口观测支持后的下一次体素更新时删除，因此还可能有最多约一个 `voxelTimeUpdateThre` 周期的延迟。时间以输入点云时间戳为准，窗口按实际处理的帧推进；若停止输入点云，地图不会自行计时刷新。测试时应持续发送正常扫描（可包含空扫描），观察障碍移走后的清理情况。
 
 ## 7. 建议试验顺序与验收
 
